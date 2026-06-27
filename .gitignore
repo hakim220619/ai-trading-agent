@@ -1,0 +1,26 @@
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Data / logs / models
+data/*.csv
+logs/*.log
+app/ml/models/*.json
+app/ml/models/*.pkl
+
+# Keep folder placeholders
+!data/.gitkeep
+!logs/.gitkeep
+!app/ml/models/.gitkeep
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/

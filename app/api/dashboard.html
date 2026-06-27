@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="id" data-bs-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Dashboard monitoring AI Trading Agent">
+  <title>AI Trading Agent</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-sRIl4kxILFvY47J16cr9ZwB07vP4J8+LH7qKQnuqkuIAvNWLzeN8tE5YBujZqJLB" crossorigin="anonymous">
+  <style>
+    :root { --app-bg:#080d18; --panel:#111827; --line:rgba(148,163,184,.15); }
+    body { min-height:100vh; background:radial-gradient(circle at 15% 0%,#172554 0,transparent 32%),var(--app-bg); }
+    .navbar { background:rgba(8,13,24,.88)!important; backdrop-filter:blur(14px); border-bottom:1px solid var(--line); }
+    .brand-mark { width:38px; height:38px; display:grid; place-items:center; border-radius:11px; font-weight:800; background:linear-gradient(135deg,#2563eb,#7c3aed); box-shadow:0 8px 25px rgba(37,99,235,.3); }
+    .app-card { background:rgba(17,24,39,.9); border:1px solid var(--line); border-radius:18px; box-shadow:0 12px 35px rgba(0,0,0,.18); }
+    .metric-card { overflow:hidden; position:relative; isolation:isolate; animation:cardIn .65s cubic-bezier(.2,.8,.2,1) both; transition:transform .25s ease,border-color .25s ease,box-shadow .25s ease; }
+    .metric-card:hover { transform:translateY(-4px); border-color:rgba(96,165,250,.35); box-shadow:0 18px 45px rgba(0,0,0,.3); }
+    .metric-card::after { content:""; position:absolute; width:90px; height:90px; right:-35px; top:-35px; border-radius:50%; background:var(--glow,rgba(59,130,246,.13)); }
+    .metric-card::before { content:""; position:absolute; inset:-100% -45%; z-index:-1; background:linear-gradient(110deg,transparent 42%,rgba(255,255,255,.06) 50%,transparent 58%); transform:translateX(-45%); animation:shine 7s ease-in-out infinite; }
+    .metric-card:nth-child(2) { animation-delay:.08s; }.metric-card:nth-child(3) { animation-delay:.16s; }.metric-card:nth-child(4) { animation-delay:.24s; }
+    .metric-label,.section-label { color:#94a3b8; font-size:.72rem; font-weight:700; letter-spacing:.09em; text-transform:uppercase; }
+    .metric-value { font-size:1.5rem; font-weight:750; letter-spacing:-.035em; }
+    .metric-icon { width:34px; height:34px; display:grid; place-items:center; border-radius:11px; font-weight:800; background:rgba(59,130,246,.14); color:#93c5fd; border:1px solid rgba(96,165,250,.2); }
+    .profit-positive { --glow:rgba(16,185,129,.3)!important; border-color:rgba(16,185,129,.35)!important; box-shadow:0 12px 38px rgba(16,185,129,.1); }
+    .profit-negative { --glow:rgba(239,68,68,.3)!important; border-color:rgba(239,68,68,.35)!important; box-shadow:0 12px 38px rgba(239,68,68,.1); }
+    .profit-neutral { --glow:rgba(148,163,184,.16)!important; }
+    .profit-state { font-size:.7rem; font-weight:700; letter-spacing:.05em; }
+    .value-pop { animation:valuePop .45s cubic-bezier(.2,.9,.3,1); }
+    .status-dot { width:8px; height:8px; display:inline-block; border-radius:50%; margin-right:6px; }
+    .status-pill { border:1px solid var(--line); background:rgba(15,23,42,.8); font-weight:600; }
+    .signal-action { font-size:1.2rem; letter-spacing:.06em; }
+    .progress { height:8px; background:#253047; }
+    .table { --bs-table-bg:transparent; margin:0; }
+    .table > :not(caption) > * > * { border-color:var(--line); padding:.8rem .65rem; }
+    .table thead th { color:#94a3b8; font-size:.7rem; letter-spacing:.07em; text-transform:uppercase; white-space:nowrap; }
+    .empty-state { min-height:145px; display:grid; place-items:center; color:#64748b; text-align:center; }
+    .detail-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.8rem; }
+    .detail-item { padding:.75rem; border-radius:12px; background:rgba(15,23,42,.7); border:1px solid var(--line); overflow:hidden; }
+    .detail-item small { display:block; color:#94a3b8; margin-bottom:.2rem; }
+    .detail-item strong { word-break:break-word; }
+    .reason-item { border-left:3px solid #3b82f6; background:rgba(59,130,246,.08); }
+    .btn { border-radius:10px; font-weight:600; }
+    .skeleton { color:#64748b; animation:pulse 1.4s ease-in-out infinite; }
+    @keyframes pulse { 50% { opacity:.45; } }
+    @keyframes cardIn { from { opacity:0; transform:translateY(18px) scale(.98); } to { opacity:1; transform:none; } }
+    @keyframes valuePop { 0% { transform:translateY(5px); opacity:.55; } 65% { transform:translateY(-2px) scale(1.025); } 100% { transform:none; opacity:1; } }
+    @keyframes shine { 0%,72% { transform:translateX(-45%); } 90%,100% { transform:translateX(45%); } }
+    @media (prefers-reduced-motion:reduce) { *,*::before,*::after { animation-duration:.01ms!important; animation-iteration-count:1!important; scroll-behavior:auto!important; transition-duration:.01ms!important; } }
+    @media (max-width:575.98px) { .metric-value{font-size:1.25rem}.detail-grid{grid-template-columns:1fr}.app-card{border-radius:14px} }
+  </style>
+</head>
+<body>
+  <nav class="navbar sticky-top py-3">
+    <div class="container-xl">
+      <div class="d-flex align-items-center gap-3">
+        <div class="brand-mark" aria-hidden="true">AI</div>
+        <div><div class="fw-bold lh-1">AI Trading Agent</div><small class="text-secondary" id="navSymbol">Memuat market...</small></div>
+      </div>
+      <div class="d-flex align-items-center gap-2 ms-auto">
+        <span id="modeBadge" class="badge rounded-pill text-bg-secondary">MEMUAT</span>
+        <span id="botBadge" class="badge rounded-pill text-bg-secondary d-none d-sm-inline">BOT --</span>
+      </div>
+    </div>
+  </nav>
+
+  <main class="container-xl py-4 py-lg-5">
+    <div id="errorAlert" class="alert alert-danger d-none" role="alert"></div>
+    <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3 mb-4">
+      <div><h1 class="h3 fw-bold mb-1">Trading Overview</h1><p class="text-secondary mb-0">Monitoring akun, sinyal, dan posisi secara real-time.</p></div>
+      <div class="d-flex flex-wrap gap-2">
+        <button class="btn btn-success action-btn" onclick="runAction('/trade/start','POST')">Mulai Bot</button>
+        <button class="btn btn-outline-light action-btn" onclick="runAction('/trade/stop','POST')">Stop Bot</button>
+        <button class="btn btn-outline-danger" data-bs-toggle="modal" data-bs-target="#closeModal">Tutup Semua</button>
+        <button id="refreshBtn" class="btn btn-primary" onclick="refreshDashboard(true)"><span id="refreshSpinner" class="spinner-border spinner-border-sm d-none" aria-hidden="true"></span> Refresh</button>
+      </div>
+    </div>
+    <div id="actionAlert" class="alert alert-info d-none" role="status"></div>
+
+    <section class="row g-3 mb-4" aria-label="Ringkasan akun">
+      <div class="col-6 col-lg-3"><div id="balanceCard" class="app-card metric-card h-100 p-3 p-lg-4" style="--glow:rgba(59,130,246,.22)"><div class="d-flex justify-content-between align-items-center mb-3"><div class="metric-label">Saldo</div><div class="metric-icon">$</div></div><div id="balanceValue" class="metric-value skeleton">--</div><small id="currencyValue" class="text-secondary">Mata uang akun</small></div></div>
+      <div class="col-6 col-lg-3"><div class="app-card metric-card h-100 p-3 p-lg-4" style="--glow:rgba(124,58,237,.22)"><div class="d-flex justify-content-between align-items-center mb-3"><div class="metric-label">Equity</div><div class="metric-icon" style="color:#c4b5fd;background:rgba(124,58,237,.14)">E</div></div><div id="equityValue" class="metric-value skeleton">--</div><small class="text-secondary">Nilai akun berjalan</small></div></div>
+      <div class="col-6 col-lg-3"><div id="profitCard" class="app-card metric-card profit-neutral h-100 p-3 p-lg-4"><div class="d-flex justify-content-between align-items-center mb-3"><div class="metric-label">Profit / Loss</div><div id="profitIcon" class="metric-icon">↔</div></div><div id="profitValue" class="metric-value skeleton">--</div><div id="profitState" class="profit-state text-secondary mt-1">BELUM ADA POSISI</div></div></div>
+      <div class="col-6 col-lg-3"><div class="app-card metric-card h-100 p-3 p-lg-4" style="--glow:rgba(245,158,11,.22)"><div class="d-flex justify-content-between align-items-center mb-3"><div class="metric-label">Posisi Terbuka</div><div class="metric-icon" style="color:#fcd34d;background:rgba(245,158,11,.14)">#</div></div><div id="positionCount" class="metric-value skeleton">--</div><small class="text-secondary">Dengan magic number bot</small></div></div>
+    </section>
+
+    <section class="row g-4 mb-4">
+      <div class="col-xl-5"><div class="app-card h-100 p-4">
+        <div class="d-flex justify-content-between align-items-start mb-4"><div><div class="section-label mb-1">Kondisi Sistem</div><h2 class="h5 mb-0">Status &amp; Permissions</h2></div><small id="updatedAt" class="text-secondary">--</small></div>
+        <div id="statusPills" class="d-flex flex-wrap gap-2 mb-4"><span class="skeleton">Mengambil status...</span></div>
+        <div class="detail-grid">
+          <div class="detail-item"><small>Symbol</small><strong id="statusSymbol">--</strong></div><div class="detail-item"><small>Timeframes</small><strong id="statusTimeframes">--</strong></div>
+          <div class="detail-item"><small>Mode Trading</small><strong id="statusMode">--</strong></div><div class="detail-item"><small>Model ML</small><strong id="statusModel">--</strong></div>
+        </div>
+      </div></div>
+      <div class="col-xl-7"><div class="app-card h-100 p-4">
+        <div class="d-flex justify-content-between align-items-start gap-3 mb-3"><div><div class="section-label mb-1">Analisis M5</div><h2 class="h5 mb-0">Sinyal Terbaru</h2></div><span id="signalBadge" class="badge rounded-pill text-bg-secondary signal-action">--</span></div>
+        <div class="d-flex justify-content-between small mb-2"><span class="text-secondary">Confidence</span><strong id="confidenceText">0%</strong></div>
+        <div class="progress mb-4"><div id="confidenceBar" class="progress-bar" style="width:0%"></div></div>
+        <div class="row g-3 mb-4">
+          <div class="col-6 col-md-3"><div class="detail-item"><small>Harga</small><strong id="signalPrice">--</strong></div></div><div class="col-6 col-md-3"><div class="detail-item"><small>ATR</small><strong id="signalAtr">--</strong></div></div>
+          <div class="col-6 col-md-3"><div class="detail-item"><small>ML Buy</small><strong id="mlBuy">--</strong></div></div><div class="col-6 col-md-3"><div class="detail-item"><small>ML Sell</small><strong id="mlSell">--</strong></div></div>
+        </div>
+        <div class="section-label mb-2">Market Structure</div>
+        <div class="row g-3 mb-4">
+          <div class="col-6 col-md-4"><div class="detail-item"><small>Support Terdekat</small><strong id="nearestSupport" class="text-success">--</strong></div></div>
+          <div class="col-6 col-md-4"><div class="detail-item"><small>Resistance Terdekat</small><strong id="nearestResistance" class="text-danger">--</strong></div></div>
+          <div class="col-6 col-md-4"><div class="detail-item"><small>Tren Struktur</small><span id="structureTrend" class="badge text-bg-secondary">--</span></div></div>
+          <div class="col-6 col-md-4"><div class="detail-item"><small>BOS (Continuation)</small><span id="bosBadge" class="badge text-bg-secondary">NONE</span><strong id="bosLevel" class="d-block mt-1">--</strong></div></div>
+          <div class="col-6 col-md-4"><div class="detail-item"><small>CHoCH (Reversal)</small><span id="chochBadge" class="badge text-bg-secondary">NONE</span><strong id="chochLevel" class="d-block mt-1">--</strong></div></div>
+          <div class="col-6 col-md-4"><div class="detail-item"><small>Retest / Breakout</small><strong id="retestStatus">--</strong></div></div>
+        </div>
+        <div class="section-label mb-2">Alasan Keputusan</div><div id="signalReasons" class="d-grid gap-2"><div class="text-secondary">Belum ada analisis.</div></div>
+      </div></div>
+    </section>
+
+    <section class="row g-4 mb-4">
+      <div class="col-lg-5"><div class="app-card h-100 p-4"><div class="section-label mb-1">Risk Management</div><h2 class="h5 mb-4">Rencana Entry, SL &amp; TP</h2><div id="tradePlan" class="empty-state"><div><div class="fs-3 mb-2">◎</div><div>Belum ada rencana trade.</div><small>Plan muncul saat sinyal BUY atau SELL valid.</small></div></div></div></div>
+      <div class="col-lg-7"><div class="app-card h-100 p-4"><div class="section-label mb-1">Informasi Broker</div><h2 class="h5 mb-4">Detail Akun</h2><div id="accountDetails" class="detail-grid"><div class="skeleton">Mengambil informasi akun...</div></div></div></div>
+    </section>
+
+    <section class="app-card overflow-hidden mb-4">
+      <div class="p-4 d-flex justify-content-between align-items-center"><div><div class="section-label mb-1">Portfolio Bot</div><h2 class="h5 mb-0">Posisi Terbuka</h2></div><span id="positionBadge" class="badge rounded-pill text-bg-secondary">0 posisi</span></div>
+      <div class="table-responsive"><table class="table table-hover align-middle"><thead><tr><th>Ticket</th><th>Type</th><th>Symbol</th><th>Lot</th><th>Open</th><th>SL</th><th>TP</th><th class="text-end">Profit</th></tr></thead><tbody id="positionsBody"><tr><td colspan="8"><div class="empty-state">Belum ada posisi terbuka.</div></td></tr></tbody></table></div>
+    </section>
+    <footer class="d-flex flex-column flex-sm-row justify-content-between gap-2 text-secondary small pb-4"><span>AI Trading Agent</span><span>Auto-refresh setiap 10 detik</span></footer>
+  </main>
+
+  <div class="modal fade" id="closeModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-dialog-centered"><div class="modal-content app-card"><div class="modal-header border-secondary-subtle"><h2 class="modal-title fs-5">Tutup semua posisi bot?</h2><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div><div class="modal-body text-secondary">Semua posisi dengan magic number bot akan ditutup pada harga market. Tindakan ini tidak dapat dibatalkan.</div><div class="modal-footer border-secondary-subtle"><button type="button" class="btn btn-outline-light" data-bs-dismiss="modal">Batal</button><button type="button" class="btn btn-danger action-btn" onclick="closeAll()">Ya, Tutup Semua</button></div></div></div></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/js/bootstrap.bundle.min.js" integrity="sha384-FKyoEForCGlyvwx9Hj09JcYn3nv7wiPVlz7YYwJrWVcXK/BmnVDxM+D2scQbITxI" crossorigin="anonymous"></script>
+  <script>
+    const el=id=>document.getElementById(id);
+    const esc=value=>String(value??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
+    const numeric=(value,digits=2)=>value==null?'--':new Intl.NumberFormat('id-ID',{minimumFractionDigits:digits,maximumFractionDigits:digits}).format(Number(value));
+    const amount=(value,currency)=>`${numeric(value,2)} ${esc(currency||'')}`.trim();
+    const percent=value=>`${numeric(Number(value||0)*100,1)}%`;
+    const reducedMotion=window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    function animateMetric(id,value,suffix='',digits=2){
+      const node=el(id); if(value==null){node.textContent='--';return;}
+      const end=Number(value),start=Number(node.dataset.value??end),duration=reducedMotion?0:700,startTime=performance.now();
+      node.dataset.value=String(end); if(node._frame)cancelAnimationFrame(node._frame);
+      const draw=now=>{const progress=duration?Math.min(1,(now-startTime)/duration):1,eased=1-Math.pow(1-progress,3),current=start+(end-start)*eased;node.textContent=`${numeric(current,digits)}${suffix?' '+suffix:''}`;if(progress<1)node._frame=requestAnimationFrame(draw);};
+      node.classList.remove('value-pop'); void node.offsetWidth; node.classList.add('value-pop'); node._frame=requestAnimationFrame(draw);
+    }
+
+    async function api(path,options={}){const response=await fetch(path,{headers:{Accept:'application/json'},...options});const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(data.detail||`HTTP ${response.status}`);return data;}
+    function pill(label,ok){return `<span class="badge rounded-pill status-pill text-bg-${ok?'success':'danger'}"><span class="status-dot bg-${ok?'success':'danger'}"></span>${esc(label)}</span>`;}
+
+    function renderStatus(s){
+      el('navSymbol').textContent=`${s.symbol} · ${(s.timeframes||[]).join(' / ')}`;
+      el('modeBadge').textContent=s.trading_enabled?'LIVE TRADING':'SAFE MODE'; el('modeBadge').className=`badge rounded-pill ${s.trading_enabled?'text-bg-danger':'text-bg-success'}`;
+      el('botBadge').textContent=s.running?'BOT RUNNING':'BOT STOPPED'; el('botBadge').className=`badge rounded-pill d-none d-sm-inline ${s.running?'text-bg-success':'text-bg-secondary'}`;
+      animateMetric('balanceValue',s.account_balance,s.account_currency); animateMetric('equityValue',s.account_equity,s.account_currency); animateMetric('profitValue',s.total_profit,s.account_currency); animateMetric('positionCount',s.open_positions,'',0);
+      const pnl=Number(s.total_profit||0),profitClass=pnl>0?'profit-positive':pnl<0?'profit-negative':'profit-neutral';
+      el('profitCard').className=`app-card metric-card ${profitClass} h-100 p-3 p-lg-4`; el('profitValue').className=`metric-value ${pnl>0?'text-success':pnl<0?'text-danger':''}`;
+      el('profitIcon').textContent=pnl>0?'↗':pnl<0?'↘':'↔'; el('profitIcon').className=`metric-icon ${pnl>0?'text-success':pnl<0?'text-danger':''}`;
+      el('profitState').textContent=pnl>0?'PROFIT BERJALAN':pnl<0?'LOSS BERJALAN':'BELUM ADA PROFIT / LOSS'; el('profitState').className=`profit-state mt-1 ${pnl>0?'text-success':pnl<0?'text-danger':'text-secondary'}`;
+      ['balanceValue','equityValue','profitValue','positionCount'].forEach(id=>el(id).classList.remove('skeleton'));
+      el('currencyValue').textContent=`Mata uang akun: ${s.account_currency||'--'}`;
+      el('statusPills').innerHTML=[pill('API Online',true),pill('MT5 Connected',s.mt5_connected),pill('Model Loaded',s.model_loaded),pill('Algo Trading',s.terminal_trade_allowed),pill('Account Trade',s.account_trade_allowed),pill('Python API',!s.trade_api_disabled)].join('');
+      el('statusSymbol').textContent=s.symbol; el('statusTimeframes').textContent=(s.timeframes||[]).join(', '); el('statusMode').textContent=s.trading_enabled?'LIVE':'SAFE'; el('statusModel').textContent=s.model_loaded?'Aktif':'Belum tersedia'; el('updatedAt').textContent=new Date().toLocaleTimeString('id-ID');
+    }
+
+    function renderSignal(payload){
+      const s=payload.signal||{},action=s.action||'HOLD',actionClass=action==='BUY'?'text-bg-success':action==='SELL'?'text-bg-danger':'text-bg-warning';
+      el('signalBadge').textContent=action; el('signalBadge').className=`badge rounded-pill signal-action ${actionClass}`;
+      const confidence=Math.max(0,Math.min(100,Number(s.confidence||0)*100)); el('confidenceText').textContent=`${numeric(confidence,1)}%`; el('confidenceBar').style.width=`${confidence}%`; el('confidenceBar').className=`progress-bar ${action==='BUY'?'bg-success':action==='SELL'?'bg-danger':'bg-warning'}`;
+      el('signalPrice').textContent=numeric(s.price,2); el('signalAtr').textContent=numeric(s.atr,2); el('mlBuy').textContent=percent(s.ml?.buy); el('mlSell').textContent=percent(s.ml?.sell);
+      const levels=s.levels||{},trend=levels.structure_trend||'ranging',bos=levels.bos,choch=levels.choch;
+      el('nearestSupport').textContent=numeric(levels.support,2); el('nearestResistance').textContent=numeric(levels.resistance,2);
+      el('structureTrend').textContent=trend.toUpperCase(); el('structureTrend').className=`badge ${trend==='bullish'?'text-bg-success':trend==='bearish'?'text-bg-danger':'text-bg-secondary'}`;
+      el('bosBadge').textContent=bos?bos.toUpperCase():'NONE'; el('bosBadge').className=`badge ${bos==='bullish'?'text-bg-success':bos==='bearish'?'text-bg-danger':'text-bg-secondary'}`; el('bosLevel').textContent=numeric(levels.bos_level,2);
+      el('chochBadge').textContent=choch?choch.toUpperCase():'NONE'; el('chochBadge').className=`badge ${choch==='bullish'?'text-bg-success':choch==='bearish'?'text-bg-danger':'text-bg-secondary'}`; el('chochLevel').textContent=numeric(levels.choch_level,2);
+      el('retestStatus').textContent=`${levels.retest?'RETEST':'NO RETEST'} · ${levels.breakout?`BREAK ${String(levels.breakout).toUpperCase()}`:'NO BREAK'}`;
+      const reasons=s.reasons||[]; el('signalReasons').innerHTML=reasons.length?reasons.map(r=>`<div class="reason-item rounded p-2 small">${esc(r)}</div>`).join(''):'<div class="text-secondary">Tidak ada alasan sinyal.</div>'; renderTradePlan(payload.trade_plan);
+    }
+
+    function renderTradePlan(plan){
+      if(!plan){el('tradePlan').className='empty-state';el('tradePlan').innerHTML='<div><div class="fs-3 mb-2">◎</div><div>Belum ada rencana trade.</div><small>Plan muncul saat sinyal BUY atau SELL valid.</small></div>';return;}
+      el('tradePlan').className='detail-grid'; el('tradePlan').innerHTML=[['Direction',plan.direction],['Entry',numeric(plan.entry,2)],['Stop Loss',numeric(plan.stop_loss,2)],['Take Profit',numeric(plan.take_profit,2)],['Lot',numeric(plan.lot,2)],['Risk Money',numeric(plan.risk_money,2)],['Risk : Reward',`1 : ${numeric(plan.rr,1)}`]].map(([k,v])=>`<div class="detail-item"><small>${esc(k)}</small><strong>${esc(v)}</strong></div>`).join('');
+    }
+
+    function renderAccount(payload){const a=payload.info||{},items=[['Login',a.login],['Server',a.server],['Leverage',a.leverage?`1:${a.leverage}`:'--'],['Currency',a.currency],['Free Margin',numeric(a.margin_free,2)],['Margin Level',a.margin_level?`${numeric(a.margin_level,2)}%`:'--']];el('accountDetails').innerHTML=items.map(([k,v])=>`<div class="detail-item"><small>${esc(k)}</small><strong>${esc(v??'--')}</strong></div>`).join('');}
+
+    function renderPositions(payload){
+      const positions=payload.positions||[]; el('positionBadge').textContent=`${positions.length} posisi`;
+      if(!positions.length){el('positionsBody').innerHTML='<tr><td colspan="8"><div class="empty-state"><div><div class="fs-3 mb-2">◇</div>Belum ada posisi bot yang terbuka.</div></div></td></tr>';return;}
+      el('positionsBody').innerHTML=positions.map(p=>`<tr><td>${esc(p.ticket)}</td><td><span class="badge ${p.type_str==='BUY'?'text-bg-success':'text-bg-danger'}">${esc(p.type_str)}</span></td><td class="fw-semibold">${esc(p.symbol)}</td><td>${numeric(p.volume,2)}</td><td>${numeric(p.price_open,2)}</td><td>${numeric(p.sl,2)}</td><td>${numeric(p.tp,2)}</td><td class="text-end fw-bold ${p.profit>=0?'text-success':'text-danger'}">${numeric(p.profit,2)}</td></tr>`).join('');
+    }
+
+    async function refreshDashboard(manual=false){
+      el('refreshSpinner').classList.remove('d-none');el('refreshBtn').disabled=true;el('errorAlert').classList.add('d-none');
+      try{const [status,account,signal,positions]=await Promise.all([api('/status'),api('/account'),api('/signal'),api('/positions')]);renderStatus(status);renderAccount(account);renderSignal(signal);renderPositions(positions);if(manual)showAction('Dashboard berhasil diperbarui.','success');}
+      catch(error){el('errorAlert').textContent=`Gagal memuat dashboard: ${error.message}`;el('errorAlert').classList.remove('d-none');}
+      finally{el('refreshSpinner').classList.add('d-none');el('refreshBtn').disabled=false;}
+    }
+    function showAction(message,type='info'){el('actionAlert').textContent=message;el('actionAlert').className=`alert alert-${type}`;}
+    async function runAction(path,method){document.querySelectorAll('.action-btn').forEach(b=>b.disabled=true);try{const result=await api(path,{method});showAction(result.message,result.ok?'success':'warning');await refreshDashboard();}catch(error){showAction(error.message,'danger');}finally{document.querySelectorAll('.action-btn').forEach(b=>b.disabled=false);}}
+    async function closeAll(){bootstrap.Modal.getOrCreateInstance(el('closeModal')).hide();await runAction('/trade/close-all','POST');}
+    refreshDashboard(); setInterval(()=>refreshDashboard(),10000);
+  </script>
+</body>
+</html>

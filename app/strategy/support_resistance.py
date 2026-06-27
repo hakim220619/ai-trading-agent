@@ -17,6 +17,11 @@ class SRLevels:
     swing_lows: list[float] = field(default_factory=list)
     breakout: str | None = None  # "up" | "down" | None
     retest: bool = False
+    structure_trend: str = "ranging"  # bullish | bearish | ranging
+    bos: str | None = None  # bullish | bearish | None
+    bos_level: float | None = None
+    choch: str | None = None  # bullish | bearish | None
+    choch_level: float | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -26,6 +31,11 @@ class SRLevels:
             "swing_lows": self.swing_lows[-5:],
             "breakout": self.breakout,
             "retest": self.retest,
+            "structure_trend": self.structure_trend,
+            "bos": self.bos,
+            "bos_level": self.bos_level,
+            "choch": self.choch,
+            "choch_level": self.choch_level,
         }
 
 
@@ -69,21 +79,51 @@ def detect_levels(df: pd.DataFrame, left: int = 3, right: int = 3, tolerance: fl
 
     price = float(df["close"].iloc[-1])
 
+    # Market structure uses the last two confirmed swing highs and lows.
+    # HH + HL = bullish; LH + LL = bearish; mixed structure = ranging.
+    if len(highs) >= 2 and len(lows) >= 2:
+        higher_high = highs[-1] > highs[-2]
+        higher_low = lows[-1] > lows[-2]
+        lower_high = highs[-1] < highs[-2]
+        lower_low = lows[-1] < lows[-2]
+        if higher_high and higher_low:
+            result.structure_trend = "bullish"
+        elif lower_high and lower_low:
+            result.structure_trend = "bearish"
+
     # Nearest resistance = lowest swing high above price.
     above = [h for h in highs if h > price]
-    result.resistance = min(above) if above else (max(highs) if highs else None)
+    result.resistance = min(above) if above else None
 
     # Nearest support = highest swing low below price.
     below = [low for low in lows if low < price]
-    result.support = max(below) if below else (min(lows) if lows else None)
+    result.support = max(below) if below else None
 
-    # Breakout: previous bar closed beyond a recent level, current confirms.
+    # Break of Structure (continuation) and Change of Character (reversal).
+    # Only close-to-close crossings count, preventing the same break from being
+    # reported repeatedly on every following candle.
     if len(df) >= 2:
         prev_close = float(df["close"].iloc[-2])
-        if result.resistance and prev_close <= result.resistance < price:
+        latest_high = highs[-1] if highs else None
+        latest_low = lows[-1] if lows else None
+        broke_high = latest_high is not None and prev_close <= latest_high < price
+        broke_low = latest_low is not None and prev_close >= latest_low > price
+        if broke_high:
             result.breakout = "up"
-        elif result.support and prev_close >= result.support > price:
+            if result.structure_trend == "bearish":
+                result.choch = "bullish"
+                result.choch_level = latest_high
+            else:
+                result.bos = "bullish"
+                result.bos_level = latest_high
+        elif broke_low:
             result.breakout = "down"
+            if result.structure_trend == "bullish":
+                result.choch = "bearish"
+                result.choch_level = latest_low
+            else:
+                result.bos = "bearish"
+                result.bos_level = latest_low
 
     # Retest: price currently hugging a level within tolerance.
     tol = price * tolerance

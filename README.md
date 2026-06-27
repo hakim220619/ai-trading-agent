@@ -139,12 +139,15 @@ MAX_SPREAD_POINTS=300
 MAX_OPEN_POSITIONS=2
 
 TRADING_ENABLED=false      # keep false until fully tested!
+AUTO_START=false           # true = start the analysis loop with the API
 TARGET_PROFIT_MONEY=5
 TRAILING_STOP=true
 MAGIC_NUMBER=220619
 
 ML_PROB_THRESHOLD=0.70
 MODEL_PATH=app/ml/models/xgboost_model.json
+MTF_CONFIRMATION=true
+MTF_MIN_AGREEMENT=0.50
 ```
 
 ---
@@ -160,17 +163,33 @@ You can export this from MT5, or from any data provider.
 python -m app.ml.train_xgboost --csv data/XAUUSD_M5.csv --horizon 1 --atr-mult 0.5
 ```
 
-This prints **accuracy / precision / recall**, logs top feature importances, and
-saves the model to `app/ml/models/xgboost_model.json`.
+The target excludes neutral candles and learns strong upward versus strong
+downward moves. Training prints **accuracy / precision / recall**, logs top
+feature importances, and saves the model to `app/ml/models/xgboost_model.json`.
 
-> If no model is present, the agent still runs — `predict_signal` returns a neutral
-> 50/50 and the ML rule simply won't pass, so it behaves conservatively.
+> If no model is present, the agent still runs from all four technical rules.
+> When a model exists, its configured probability threshold becomes an
+> additional mandatory confirmation.
+
+Export fresh broker candles directly from MT5:
+
+```bash
+python -m app.mt5.export_data --symbol XAUUSD --timeframe M5 --count 10000
+
+# Five years of BTCUSD history (availability depends on the broker/MT5 history limit)
+python -m app.mt5.export_data --symbol BTCUSD --timeframe M5 --years 5 --output data/BTCUSD_M5_5Y.csv
+```
 
 ---
 
 ## 📊 Run a backtest
 
 ```bash
+python -m app.backtest.run --csv data/BTCUSD_M5.csv --last 2000
+
+# Multi-year BTCUSD backtest
+python -m app.backtest.run --csv data/BTCUSD_H1_5Y.csv --symbol BTCUSD --model app/ml/models/BTCUSD_H1_5Y_xgboost_model.json --signal-lookback 500 --account-profile exness-pro --commission-per-lot-side 0
+
 # CLI quick check via Python
 python -c "from app.mt5.market_data import load_candles_csv; \
 from app.backtest.backtester import run_backtest; \
@@ -182,6 +201,27 @@ print_report(run_backtest(load_candles_csv('data/XAUUSD_M5.csv')))"
 
 The report includes: trades, win rate, net profit, ROI, profit factor, average
 win/loss, and max drawdown.
+
+### Standalone universal day-trade strategy
+
+The new strategy in `app/strategy/day_trade_strategy.py` is separate from the
+existing live strategy. It combines EMA trend, Donchian breakout, RSI, MACD,
+ATR, and volume confirmation, with adaptive crypto/metals/standard presets.
+It stops taking new entries after a daily profit target, daily loss limit, or
+maximum trade count is reached. A daily target is a circuit breaker, not a
+guaranteed return.
+
+XAUUSD M5 / Exness Pro:
+
+```bash
+python -m app.backtest.day_trade_run --csv data/XAUUSD_M5.csv --symbol XAUUSD --market-profile metals --start-balance 100 --daily-target 30 --daily-loss-limit 20 --risk-percent 1 --max-trades-per-day 3 --max-hold-bars 24 --cooldown-bars 6 --max-spread-points 300 --commission-per-lot-side 0 --output logs/day_trade_XAUUSD_100USD.json
+```
+
+BTCUSD M5 / Exness Pro:
+
+```bash
+python -m app.backtest.day_trade_run --csv data/BTCUSD_M5_5Y.csv --symbol BTCUSD --market-profile crypto --start-balance 100 --daily-target 30 --daily-loss-limit 20 --risk-percent 1 --max-trades-per-day 2 --max-hold-bars 36 --cooldown-bars 12 --max-spread-points 1500 --commission-per-lot-side 0 --output logs/day_trade_BTCUSD_100USD.json
+```
 
 ---
 
@@ -207,6 +247,7 @@ Open **http://localhost:8000/** for the dashboard.
 | POST | `/trade/start` | Start the live decision loop |
 | POST | `/trade/stop` | Stop the loop |
 | POST | `/trade/close-all` | Close all bot positions |
+| POST | `/data/export` | Export MT5 candles to CSV |
 | POST | `/train` | Train model `{ "csv": "data/XAUUSD_M5.csv" }` |
 | POST | `/backtest` | Backtest `{ "csv": "data/XAUUSD_M5.csv" }` |
 
@@ -224,8 +265,8 @@ Interactive docs at **http://localhost:8000/docs**.
 
 The bot only enters when **all** rules align:
 
-**BUY:** EMA20>EMA50 · price>EMA200 · RSI 50–70 · near support · ML buy ≥ threshold · spread OK
-**SELL:** EMA20<EMA50 · price<EMA200 · RSI 30–50 · near resistance · ML sell ≥ threshold · spread OK
+**BUY:** EMA20>EMA50 · price>EMA200 · RSI 50–70 · near support · ML buy ≥ threshold (when a model exists) · higher-timeframe confirmation · spread OK
+**SELL:** EMA20<EMA50 · price<EMA200 · RSI 30–50 · near resistance · ML sell ≥ threshold (when a model exists) · higher-timeframe confirmation · spread OK
 Otherwise → **HOLD**. Every decision and its reasons are logged.
 
 ---
@@ -234,7 +275,8 @@ Otherwise → **HOLD**. Every decision and its reasons are logged.
 
 - **SAFE mode by default** — `TRADING_ENABLED=false` blocks every live order.
 - Orders are blocked if: market closed, spread too high, duplicate position,
-  max positions reached, or invalid lot/SL/TP.
+  max positions reached, terminal/account permission is disabled, or invalid
+  lot/SL/TP. Every deal is validated with MT5 `order_check` before `order_send`.
 - `MAX_OPEN_POSITIONS` limits concurrent exposure (anti-overtrade).
 - All orders are tagged with `MAGIC_NUMBER` so the bot only ever touches its own
   trades.

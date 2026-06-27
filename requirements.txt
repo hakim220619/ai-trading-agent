@@ -1,5 +1,5 @@
 # Core
-MetaTrader5==5.0.45 ; platform_system == "Windows"
+MetaTrader5==5.0.5735 ; platform_system == "Windows"
 pandas>=2.1.0
 numpy>=1.26.0
 pandas-ta>=0.3.14b0

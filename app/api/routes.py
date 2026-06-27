@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import HTMLResponse
@@ -10,6 +11,7 @@ from app.api.schemas import (
     AccountResponse,
     ActionResponse,
     BacktestRequest,
+    ExportRequest,
     PositionsResponse,
     SignalResponse,
     StatusResponse,
@@ -33,22 +35,35 @@ def _get_bot():
 
 @router.get("/", response_class=HTMLResponse, tags=["dashboard"])
 def dashboard() -> str:
-    """Minimal single-page monitoring dashboard."""
-    return _DASHBOARD_HTML
+    """Responsive Bootstrap monitoring dashboard."""
+    return Path(__file__).with_name("dashboard.html").read_text(encoding="utf-8")
 
 
 @router.get("/status", response_model=StatusResponse, tags=["monitor"])
 def status() -> StatusResponse:
     bot = _get_bot()
-    connected = MT5_AVAILABLE and connection.connected
+    connected = MT5_AVAILABLE and connection.ensure_connected()
+    account_info = connection.account_info() if connected else None
+    positions = position_manager.get_open_positions() if connected else []
+    total_profit = round(sum(float(p.get("profit", 0.0)) for p in positions), 2)
+    trade_status = connection.trading_status() if connected else {
+        "terminal_trade_allowed": False,
+        "account_trade_allowed": False,
+        "trade_api_disabled": True,
+    }
     return StatusResponse(
         running=bot.running,
         trading_enabled=settings.trading_enabled,
         mt5_connected=connected,
         symbol=settings.symbol,
         timeframes=settings.timeframes,
-        open_positions=order_executor.count_open_positions(),
+        open_positions=len(positions),
         model_loaded=get_model() is not None,
+        account_balance=(round(float(account_info["balance"]), 2) if account_info else None),
+        account_equity=(round(float(account_info["equity"]), 2) if account_info else None),
+        account_currency=(str(account_info["currency"]) if account_info else None),
+        total_profit=total_profit,
+        **trade_status,
     )
 
 
@@ -73,17 +88,24 @@ def signal(timeframe: str | None = None) -> SignalResponse:
     bot = _get_bot()
     tf = timeframe or bot.PRIMARY_TF
     sig = bot.compute_signal_now(tf)
-    return SignalResponse(timeframe=tf, signal=sig.to_dict())
+    return SignalResponse(
+        timeframe=tf,
+        signal=sig.to_dict(),
+        trade_plan=bot.preview_trade_plan(sig),
+    )
 
 
 @router.post("/trade/start", response_model=ActionResponse, tags=["control"])
 def trade_start() -> ActionResponse:
     bot = _get_bot()
     started = bot.start()
-    return ActionResponse(
-        ok=started,
-        message="bot started" if started else "bot already running",
-    )
+    if started:
+        message = "bot started"
+    elif bot.running:
+        message = "bot already running"
+    else:
+        message = "bot not started; check MT5 installation, path, login, and server"
+    return ActionResponse(ok=started, message=message)
 
 
 @router.post("/trade/stop", response_model=ActionResponse, tags=["control"])
@@ -118,6 +140,23 @@ def train(req: TrainRequest) -> ActionResponse:
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+@router.post("/data/export", response_model=ActionResponse, tags=["data"])
+def export_data(req: ExportRequest) -> ActionResponse:
+    """Export broker candle history to ``data/<symbol>_<timeframe>.csv``."""
+    try:
+        from app.mt5.market_data import export_candles_csv
+
+        detail = export_candles_csv(
+            symbol=req.symbol,
+            timeframe=req.timeframe,
+            count=req.count,
+        )
+        return ActionResponse(ok=True, message="candle export complete", detail=detail)
+    except Exception as exc:
+        logger.exception("Candle export failed: {}", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
 @router.post("/backtest", response_model=ActionResponse, tags=["ml"])
 def backtest(req: BacktestRequest) -> ActionResponse:
     if not os.path.exists(req.csv):
@@ -133,6 +172,11 @@ def backtest(req: BacktestRequest) -> ActionResponse:
             start_balance=req.start_balance,
             warmup=req.warmup,
             max_hold=req.max_hold,
+            signal_lookback=req.signal_lookback,
+            account_profile=req.account_profile,
+            use_historical_spread=req.use_historical_spread,
+            commission_per_lot_side=req.commission_per_lot_side,
+            slippage_points=req.slippage_points,
         )
         stats = summarize(result)
         return ActionResponse(ok=True, message="backtest complete", detail=stats)
@@ -178,6 +222,7 @@ _DASHBOARD_HTML = """
     <pre id="action"></pre>
   </div>
   <div class="card"><h2>Status</h2><pre id="status"></pre></div>
+  <div class="card"><h2>Balance &amp; Bot Profit</h2><pre id="summary"></pre></div>
   <div class="card"><h2>Account</h2><pre id="account"></pre></div>
   <div class="card"><h2>Signal (M5)</h2><pre id="signal"></pre></div>
   <div class="card"><h2>Positions</h2><pre id="positions"></pre></div>
@@ -189,6 +234,13 @@ function show(id,obj){ document.getElementById(id).textContent=JSON.stringify(ob
 async function refresh(){
   try{
     const s=await get('/status'); show('status',s);
+    show('summary', {
+      currency: s.account_currency,
+      balance: s.account_balance,
+      equity: s.account_equity,
+      floating_profit: s.total_profit,
+      bot_positions: s.open_positions
+    });
     const m=document.getElementById('mode');
     m.textContent = s.trading_enabled ? 'LIVE' : 'SAFE MODE';
     m.className = 'pill ' + (s.trading_enabled ? 'on' : 'off');

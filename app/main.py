@@ -21,10 +21,10 @@ import pandas as pd
 from app.config import settings
 from app.mt5 import order_executor, position_manager
 from app.mt5.connection import MT5_AVAILABLE, connection
-from app.mt5.market_data import get_candles
+from app.mt5.market_data import get_candles, get_current_tick
 from app.ml.feature_engineering import build_features
 from app.strategy.risk_manager import build_trade_plan
-from app.strategy.signal_generator import Signal, generate_signal
+from app.strategy.signal_generator import Signal, confirm_multi_timeframe, generate_signal
 from app.utils.logger import logger
 
 
@@ -39,6 +39,8 @@ class TradingBot:
         self._stop_event = threading.Event()
         self._lock = threading.Lock()
         self.last_signal: Signal | None = None
+        self.last_trade_plan: dict[str, object] | None = None
+        self.last_order_result: dict[str, object] | None = None
         self.last_run_ts: float = 0.0
         self._last_bar_time: Any = None
 
@@ -53,8 +55,12 @@ class TradingBot:
             if self.running:
                 logger.warning("Bot already running.")
                 return False
-            if MT5_AVAILABLE:
-                connection.connect()
+            if not MT5_AVAILABLE:
+                logger.error("Cannot start trading bot: MetaTrader5 package unavailable.")
+                return False
+            if not connection.connect():
+                logger.error("Cannot start trading bot: MT5 connection/login failed.")
+                return False
             self._stop_event.clear()
             self._thread = threading.Thread(target=self._run_loop, name="trading-bot", daemon=True)
             self._thread.start()
@@ -108,8 +114,18 @@ class TradingBot:
             position_manager.manage_positions(settings.symbol)
             return self.last_signal
 
-        df = build_features(df)
-        sig = generate_signal(df)
+        # MT5 includes the currently-forming candle as the last row. Decisions
+        # must use closed bars so their indicators cannot repaint after entry.
+        closed = df.iloc[:-1].copy()
+        if closed.empty:
+            return None
+        frames = self._feature_frames(closed, self.PRIMARY_TF)
+        df = frames[self.PRIMARY_TF]
+        sig = confirm_multi_timeframe(
+            generate_signal(df),
+            frames,
+            primary=self.PRIMARY_TF,
+        )
         self.last_signal = sig
         self.last_run_ts = time.time()
 
@@ -125,41 +141,90 @@ class TradingBot:
 
     def _maybe_enter(self, sig: Signal, df: pd.DataFrame) -> None:
         """Size and submit an order for an actionable signal (if enabled)."""
+        account = connection.account_info() or {}
+        balance = float(account.get("balance", 1000.0))
+        tick = get_current_tick(settings.symbol)
+        entry = sig.price
+        if tick:
+            entry = tick["ask"] if sig.action == "BUY" else tick["bid"]
+
+        plan = build_trade_plan(
+            direction=sig.action,
+            entry=entry,
+            atr_value=sig.atr,
+            balance=balance,
+            swing_high=sig.levels.get("resistance"),  # type: ignore[arg-type]
+            swing_low=sig.levels.get("support"),       # type: ignore[arg-type]
+        )
+        self.last_trade_plan = plan.to_dict()
+
         if not settings.trading_enabled:
-            logger.info("[SAFE MODE] Would {} but TRADING_ENABLED=false.", sig.action)
+            logger.info(
+                "[SAFE MODE] Would {} entry={} lot={} SL={} TP={} but "
+                "TRADING_ENABLED=false.",
+                sig.action,
+                plan.entry,
+                plan.lot,
+                plan.stop_loss,
+                plan.take_profit,
+            )
             return
 
         if order_executor.count_open_positions(settings.symbol) >= settings.max_open_positions:
             logger.info("Max positions reached - skip entry.")
             return
 
-        account = connection.account_info() or {}
-        balance = float(account.get("balance", 1000.0))
-
-        plan = build_trade_plan(
-            direction=sig.action,
-            entry=sig.price,
-            atr_value=sig.atr,
-            balance=balance,
-            swing_high=sig.levels.get("resistance"),  # type: ignore[arg-type]
-            swing_low=sig.levels.get("support"),       # type: ignore[arg-type]
-        )
-
         if sig.action == "BUY":
             res = order_executor.open_buy(settings.symbol, plan.lot, plan.stop_loss, plan.take_profit)
         else:
             res = order_executor.open_sell(settings.symbol, plan.lot, plan.stop_loss, plan.take_profit)
-        logger.info("Entry result: {}", res.message)
+        self.last_order_result = res.to_dict()
+        logger.info("Entry result: {} | plan={}", res.message, plan.to_dict())
 
     # --- introspection -----------------------------------------------------
     def compute_signal_now(self, timeframe: str | None = None) -> Signal:
         """Compute (without trading) the current signal for inspection."""
         tf = timeframe or self.PRIMARY_TF
         df = get_candles(settings.symbol, tf, settings.candles)
-        if df.empty:
+        if len(df) < 2:
             return Signal(reasons=["no data / MT5 unavailable"])
-        df = build_features(df)
-        return generate_signal(df)
+        frames = self._feature_frames(df.iloc[:-1].copy(), tf)
+        return confirm_multi_timeframe(generate_signal(frames[tf]), frames, primary=tf)
+
+    def preview_trade_plan(self, sig: Signal) -> dict[str, object] | None:
+        """Return the current SL/TP/lot proposal without placing an order."""
+        if sig.action not in ("BUY", "SELL"):
+            return None
+        account = connection.account_info() or {}
+        balance = float(account.get("balance", 1000.0))
+        tick = get_current_tick(settings.symbol)
+        entry = sig.price
+        if tick:
+            entry = tick["ask"] if sig.action == "BUY" else tick["bid"]
+        plan = build_trade_plan(
+            direction=sig.action,
+            entry=entry,
+            atr_value=sig.atr,
+            balance=balance,
+            swing_high=sig.levels.get("resistance"),  # type: ignore[arg-type]
+            swing_low=sig.levels.get("support"),      # type: ignore[arg-type]
+        )
+        return plan.to_dict()
+
+    def _feature_frames(
+        self,
+        primary_df: pd.DataFrame,
+        primary_tf: str,
+    ) -> dict[str, pd.DataFrame]:
+        """Build features for the primary and configured context timeframes."""
+        frames = {primary_tf: build_features(primary_df)}
+        for timeframe in dict.fromkeys(settings.timeframes):
+            if timeframe == primary_tf:
+                continue
+            context = get_candles(settings.symbol, timeframe, settings.candles)
+            if len(context) >= 2:
+                frames[timeframe] = build_features(context.iloc[:-1].copy())
+        return frames
 
 
 # Shared singleton used by both the API and CLI entry.
@@ -179,6 +244,18 @@ def create_app():
         version="1.0.0",
     )
     app.include_router(router)
+
+    @app.on_event("startup")
+    def _auto_start_bot() -> None:
+        if settings.auto_start:
+            bot.start()
+
+    @app.on_event("shutdown")
+    def _stop_bot() -> None:
+        if bot.running:
+            bot.stop()
+        connection.disconnect()
+
     return app
 
 

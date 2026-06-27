@@ -48,6 +48,8 @@ def _symbol_meta(symbol: str) -> dict[str, float]:
             "volume_min": info.get("volume_min", 0.01) or 0.01,
             "volume_max": info.get("volume_max", 100.0) or 100.0,
             "volume_step": info.get("volume_step", 0.01) or 0.01,
+            "digits": info.get("digits", 2) or 2,
+            "stops_level": info.get("trade_stops_level", 0) or 0,
         }
     # Offline defaults (approx. XAUUSD on a 100oz contract).
     return {
@@ -57,6 +59,8 @@ def _symbol_meta(symbol: str) -> dict[str, float]:
         "volume_min": 0.01,
         "volume_max": 100.0,
         "volume_step": 0.01,
+        "digits": 2,
+        "stops_level": 0,
     }
 
 
@@ -122,6 +126,25 @@ def build_trade_plan(
         sl = max(sl, entry + atr_dist) if swing_high else sl
         risk = sl - entry
         tp = entry - risk * rr
+
+    # Respect the broker's minimum stop distance and price precision. This
+    # prevents otherwise-valid signals from being rejected as "invalid stops".
+    meta = _symbol_meta(symbol)
+    min_stop_distance = meta["stops_level"] * meta["point"]
+    if direction == "BUY":
+        if min_stop_distance > 0:
+            sl = min(sl, entry - min_stop_distance)
+        risk = entry - sl
+        tp = entry + risk * rr
+    else:
+        if min_stop_distance > 0:
+            sl = max(sl, entry + min_stop_distance)
+        risk = sl - entry
+        tp = entry - risk * rr
+
+    digits = int(meta["digits"])
+    sl = round(sl, digits)
+    tp = round(tp, digits)
 
     lot = calculate_lot(balance, settings.risk_percent, entry, sl, symbol)
     risk_money = balance * (settings.risk_percent / 100.0)

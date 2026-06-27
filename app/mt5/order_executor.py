@@ -40,6 +40,17 @@ def _validate_spread(symbol: str) -> tuple[bool, str]:
     return True, "ok"
 
 
+def _validate_trade_permissions() -> tuple[bool, str]:
+    status = connection.trading_status()
+    if status["trade_api_disabled"]:
+        return False, "external Python trading API is disabled in MT5"
+    if not status["terminal_trade_allowed"]:
+        return False, "Algo Trading is disabled in the MT5 terminal"
+    if not status["account_trade_allowed"]:
+        return False, "trading is not allowed for the logged-in account"
+    return True, "ok"
+
+
 def _normalize_lot(symbol: str, lot: float) -> float:
     info = connection.symbol_info(symbol)
     if info is None:
@@ -50,6 +61,20 @@ def _normalize_lot(symbol: str, lot: float) -> float:
     lot = round_to_step(lot, vol_step)
     lot = max(vol_min, min(vol_max, lot))
     return round(lot, 2)
+
+
+def _filling_type(symbol: str) -> int:
+    """Choose a volume filling policy supported by the broker's symbol."""
+    info = connection.symbol_info(symbol) or {}
+    allowed = int(info.get("filling_mode", 0) or 0)
+    if allowed & 2:  # SYMBOL_FILLING_IOC
+        return mt5.ORDER_FILLING_IOC
+    if allowed & 1:  # SYMBOL_FILLING_FOK
+        return mt5.ORDER_FILLING_FOK
+    execution = info.get("trade_exemode")
+    if execution != mt5.SYMBOL_TRADE_EXECUTION_MARKET:
+        return mt5.ORDER_FILLING_RETURN
+    return mt5.ORDER_FILLING_FOK
 
 
 def has_open_position(symbol: str, direction: str | None = None) -> bool:
@@ -74,6 +99,12 @@ def count_open_positions(symbol: str | None = None) -> int:
 
 
 def _send(request: dict[str, Any]) -> OrderResult:
+    if request.get("action") == mt5.TRADE_ACTION_DEAL:
+        check = mt5.order_check(request)
+        if check is None:
+            return OrderResult(False, f"order_check None: {mt5.last_error()}")
+        if check.retcode != 0:
+            return OrderResult(False, f"order_check retcode={check.retcode} {check.comment}", check)
     result = mt5.order_send(request)
     if result is None:
         return OrderResult(False, f"order_send None: {mt5.last_error()}")
@@ -95,6 +126,10 @@ def _open(
         return OrderResult(False, "TRADING_ENABLED is false - order blocked (safe mode)")
     if not MT5_AVAILABLE or not connection.ensure_connected():
         return OrderResult(False, "MT5 not connected")
+
+    ok, why = _validate_trade_permissions()
+    if not ok:
+        return OrderResult(False, f"permission check failed: {why}")
 
     ok, why = _validate_market_open(symbol)
     if not ok:
@@ -123,19 +158,22 @@ def _open(
         order_type = mt5.ORDER_TYPE_SELL
         price = tick.bid
 
+    info = connection.symbol_info(symbol) or {}
+    digits = int(info.get("digits", 5) or 5)
+
     request: dict[str, Any] = {
         "action": mt5.TRADE_ACTION_DEAL,
         "symbol": symbol,
         "volume": lot,
         "type": order_type,
-        "price": price,
-        "sl": round(sl, 5) if sl else 0.0,
-        "tp": round(tp, 5) if tp else 0.0,
+        "price": round(price, digits),
+        "sl": round(sl, digits) if sl else 0.0,
+        "tp": round(tp, digits) if tp else 0.0,
         "deviation": 20,
         "magic": settings.magic_number,
         "comment": comment[:31],
         "type_time": mt5.ORDER_TIME_GTC,
-        "type_filling": mt5.ORDER_FILLING_IOC,
+        "type_filling": _filling_type(symbol),
     }
 
     logger.info("Sending {} {} lot={} sl={} tp={}", direction.upper(), symbol, lot, sl, tp)
@@ -178,7 +216,7 @@ def _close_position(position: Any) -> OrderResult:
         "magic": settings.magic_number,
         "comment": "ai-close",
         "type_time": mt5.ORDER_TIME_GTC,
-        "type_filling": mt5.ORDER_FILLING_IOC,
+        "type_filling": _filling_type(position.symbol),
     }
     return _send(request)
 

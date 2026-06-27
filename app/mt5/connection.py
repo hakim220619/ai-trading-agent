@@ -161,6 +161,33 @@ class MT5Connection:
             return float(info.get("spread", 0))
         return round((tick.ask - tick.bid) / point, 1)
 
+    def trading_status(self) -> dict[str, bool]:
+        """Return terminal/account permissions relevant to automated orders."""
+        status = {
+            "terminal_trade_allowed": False,
+            "account_trade_allowed": False,
+            "trade_api_disabled": True,
+        }
+        if not self.ensure_connected():
+            return status
+        terminal = mt5.terminal_info()
+        account = mt5.account_info()
+        if terminal is not None:
+            status["terminal_trade_allowed"] = bool(terminal.trade_allowed)
+            status["trade_api_disabled"] = bool(terminal.tradeapi_disabled)
+        if account is not None:
+            status["account_trade_allowed"] = bool(account.trade_allowed)
+        return status
+
+    def can_trade(self) -> bool:
+        """True only when both MT5 and the logged-in account allow trading."""
+        status = self.trading_status()
+        return (
+            status["terminal_trade_allowed"]
+            and status["account_trade_allowed"]
+            and not status["trade_api_disabled"]
+        )
+
 
 # Shared, lazily-used singleton connection.
 connection = MT5Connection()

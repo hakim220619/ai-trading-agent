@@ -16,6 +16,11 @@ def summarize(result: BacktestResult) -> dict[str, Any]:
     gross_profit = sum(t.pnl for t in wins)
     gross_loss = abs(sum(t.pnl for t in losses))
     net = result.end_balance - result.start_balance
+    spread_cost = sum(t.spread_cost for t in trades)
+    commission_cost = sum(t.commission for t in trades)
+    slippage_cost = sum(t.slippage_cost for t in trades)
+    total_cost = spread_cost + commission_cost + slippage_cost
+    gross_before_costs = sum(t.gross_pnl for t in trades)
 
     win_rate = (len(wins) / n * 100.0) if n else 0.0
     profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else (float("inf") if gross_profit > 0 else 0.0)
@@ -31,6 +36,11 @@ def summarize(result: BacktestResult) -> dict[str, Any]:
         "losses": len(losses),
         "win_rate_pct": round(win_rate, 2),
         "net_profit": round(net, 2),
+        "gross_before_costs": round(gross_before_costs, 2),
+        "spread_cost": round(spread_cost, 2),
+        "commission_cost": round(commission_cost, 2),
+        "slippage_cost": round(slippage_cost, 2),
+        "total_trading_cost": round(total_cost, 2),
         "roi_pct": round(roi, 2),
         "profit_factor": round(profit_factor, 2) if profit_factor != float("inf") else "inf",
         "avg_win": round(avg_win, 2),
@@ -38,6 +48,8 @@ def summarize(result: BacktestResult) -> dict[str, Any]:
         "max_drawdown_pct": round(max_dd, 2),
         "start_balance": round(result.start_balance, 2),
         "end_balance": round(result.end_balance, 2),
+        "account_profile": result.account_profile,
+        "historical_spread": result.historical_spread,
     }
 
 

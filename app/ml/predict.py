@@ -51,7 +51,8 @@ def get_model() -> Any | None:
 def predict_signal(features: dict[str, float]) -> dict[str, float]:
     """Return BUY/SELL probabilities from the model.
 
-    The model predicts P(next candle up). buy = that probability, sell = 1-buy.
+    The model predicts P(strong upward move versus strong downward move).
+    ``buy`` is the upward probability and ``sell`` is its complement.
     If no model exists, returns a neutral 50/50 so the bot degrades gracefully.
     """
     model = get_model()

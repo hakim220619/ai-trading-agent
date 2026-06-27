@@ -45,6 +45,7 @@ class Settings(BaseSettings):
 
     # --- Behaviour / safety ---
     trading_enabled: bool = Field(default=False)
+    auto_start: bool = Field(default=False)
     target_profit_money: float = Field(default=5.0)
     trailing_stop: bool = Field(default=True)
     trailing_start_points: int = Field(default=200)
@@ -54,6 +55,10 @@ class Settings(BaseSettings):
     # --- ML ---
     ml_prob_threshold: float = Field(default=0.70)
     model_path: str = Field(default="app/ml/models/xgboost_model.json")
+
+    # --- Multi-timeframe confirmation ---
+    mtf_confirmation: bool = Field(default=True)
+    mtf_min_agreement: float = Field(default=0.5, ge=0.0, le=1.0)
 
     # --- API ---
     api_host: str = Field(default="0.0.0.0")

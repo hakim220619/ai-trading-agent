@@ -48,16 +48,20 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def build_target(df: pd.DataFrame, horizon: int = 1, atr_mult: float = 0.5) -> pd.Series:
-    """Binary target: 1 if next candle rises more than ATR*atr_mult, else 0.
+    """Directional target: 1 for a strong rise, 0 for a strong fall.
 
-    Compares close[t+horizon] vs close[t]. The last ``horizon`` rows get 0
-    (no future data) and should be dropped before training.
+    Moves inside ``+/- ATR*atr_mult`` are neutral and excluded from training,
+    so SELL probability means an actual downward move instead of merely
+    "not a strong rise". Rows without future data are excluded too.
     """
     close = df["close"]
     atr_v = df["atr"] if "atr" in df.columns else (df["high"] - df["low"])
     future = close.shift(-horizon)
     move = future - close
-    target = (move > (atr_v * atr_mult)).astype(int)
+    threshold = atr_v * atr_mult
+    target = pd.Series(np.nan, index=df.index, dtype="float64")
+    target.loc[move > threshold] = 1.0
+    target.loc[move < -threshold] = 0.0
     return target
 
 
@@ -71,9 +75,6 @@ def make_dataset(df: pd.DataFrame, horizon: int = 1, atr_mult: float = 0.5) -> t
 
     feat = feat.replace([np.inf, -np.inf], np.nan)
     feat = feat.dropna(subset=FEATURE_COLUMNS + ["target"])
-    if horizon > 0:
-        feat = feat.iloc[:-horizon] if len(feat) > horizon else feat
-
     X = feat[FEATURE_COLUMNS].copy()
     y = feat["target"].astype(int).copy()
     return X, y
@@ -86,3 +87,12 @@ def features_to_row(features: dict[str, float]) -> pd.DataFrame:
     """
     row = {col: float(features.get(col, 0.0)) for col in FEATURE_COLUMNS}
     return pd.DataFrame([row], columns=FEATURE_COLUMNS)
+
+
+def extract_feature_row(row: pd.Series) -> dict[str, float]:
+    """Extract the complete model feature vector from a feature DataFrame row."""
+    features: dict[str, float] = {}
+    for col in FEATURE_COLUMNS:
+        value = row.get(col, 0.0)
+        features[col] = float(value) if pd.notna(value) else 0.0
+    return features

@@ -1,6 +1,7 @@
 """Order execution against MetaTrader 5 with full pre-trade validation."""
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from app.config import settings
@@ -54,13 +55,23 @@ def _validate_trade_permissions() -> tuple[bool, str]:
 def _normalize_lot(symbol: str, lot: float) -> float:
     info = connection.symbol_info(symbol)
     if info is None:
-        return lot
-    vol_min = info.get("volume_min", 0.01)
+        return max(lot, configured_minimum_lot(symbol))
+    vol_min = max(float(info.get("volume_min", 0.01) or 0.01), configured_minimum_lot(symbol))
     vol_max = info.get("volume_max", 100.0)
     vol_step = info.get("volume_step", 0.01)
     lot = round_to_step(lot, vol_step)
     lot = max(vol_min, min(vol_max, lot))
     return round(lot, 2)
+
+
+def configured_minimum_lot(symbol: str) -> float:
+    """Return the application-level minimum lot for configured instruments."""
+    upper = symbol.upper()
+    if "BTCUSD" in upper:
+        return settings.btcusd_min_lot
+    if "XAUUSD" in upper or "GOLD" in upper:
+        return settings.xauusd_min_lot
+    return settings.lot_default
 
 
 def _filling_type(symbol: str) -> int:
@@ -90,12 +101,12 @@ def has_open_position(symbol: str, direction: str | None = None) -> bool:
     return any(p.type == want and p.magic == settings.magic_number for p in positions)
 
 
-def count_open_positions(symbol: str | None = None) -> int:
-    """Count open positions owned by this bot (matching magic number)."""
+def count_open_positions(symbol: str | None = None, bot_only: bool = True) -> int:
+    """Count open positions, optionally restricted to the bot magic number."""
     if not MT5_AVAILABLE or not connection.ensure_connected():
         return 0
     positions = mt5.positions_get(symbol=symbol or settings.symbol) or []
-    return sum(1 for p in positions if p.magic == settings.magic_number)
+    return sum(1 for p in positions if not bot_only or p.magic == settings.magic_number)
 
 
 def _send(request: dict[str, Any]) -> OrderResult:
@@ -120,6 +131,7 @@ def _open(
     sl: float,
     tp: float,
     comment: str,
+    enforce_spread: bool = True,
 ) -> OrderResult:
     """Shared open-position routine with all safety checks."""
     if not settings.trading_enabled:
@@ -134,12 +146,14 @@ def _open(
     ok, why = _validate_market_open(symbol)
     if not ok:
         return OrderResult(False, f"market check failed: {why}")
-    ok, why = _validate_spread(symbol)
-    if not ok:
-        return OrderResult(False, f"spread check failed: {why}")
+    if enforce_spread:
+        ok, why = _validate_spread(symbol)
+        if not ok:
+            return OrderResult(False, f"spread check failed: {why}")
 
-    if count_open_positions(symbol) >= settings.max_open_positions:
-        return OrderResult(False, "max open positions reached")
+    open_count = count_open_positions(symbol, bot_only=False)
+    if open_count >= settings.max_open_positions:
+        return OrderResult(False, f"max open positions reached ({open_count}/{settings.max_open_positions})")
     if has_open_position(symbol, direction):
         return OrderResult(False, f"duplicate {direction} position exists")
 
@@ -185,14 +199,28 @@ def _open(
     return result
 
 
-def open_buy(symbol: str, lot: float, sl: float, tp: float, comment: str = "ai-buy") -> OrderResult:
+def open_buy(
+    symbol: str,
+    lot: float,
+    sl: float,
+    tp: float,
+    comment: str = "ai-buy",
+    enforce_spread: bool = True,
+) -> OrderResult:
     """Open a BUY market position."""
-    return _open(symbol, "buy", lot, sl, tp, comment)
+    return _open(symbol, "buy", lot, sl, tp, comment, enforce_spread=enforce_spread)
 
 
-def open_sell(symbol: str, lot: float, sl: float, tp: float, comment: str = "ai-sell") -> OrderResult:
+def open_sell(
+    symbol: str,
+    lot: float,
+    sl: float,
+    tp: float,
+    comment: str = "ai-sell",
+    enforce_spread: bool = True,
+) -> OrderResult:
     """Open a SELL market position."""
-    return _open(symbol, "sell", lot, sl, tp, comment)
+    return _open(symbol, "sell", lot, sl, tp, comment, enforce_spread=enforce_spread)
 
 
 def _close_position(position: Any) -> OrderResult:
@@ -221,14 +249,19 @@ def _close_position(position: Any) -> OrderResult:
     return _send(request)
 
 
-def close_all_positions(symbol: str | None = None) -> list[dict[str, Any]]:
-    """Close every bot-owned position (optionally for one symbol)."""
+def close_all_positions(
+    symbol: str | None = None,
+    bot_only: bool = True,
+    all_symbols: bool = False,
+) -> list[dict[str, Any]]:
+    """Close selected positions; defaults remain restricted to bot ownership."""
     if not MT5_AVAILABLE or not connection.ensure_connected():
         return [{"ok": False, "message": "MT5 not connected"}]
-    positions = mt5.positions_get(symbol=symbol or settings.symbol) or []
+    positions = mt5.positions_get() if all_symbols else mt5.positions_get(symbol=symbol or settings.symbol)
+    positions = positions or []
     results = []
     for p in positions:
-        if p.magic != settings.magic_number:
+        if bot_only and p.magic != settings.magic_number:
             continue
         res = _close_position(p)
         logger.info("Close ticket {} -> {}", p.ticket, res.message)
@@ -248,6 +281,54 @@ def close_profit_positions(symbol: str | None = None) -> list[dict[str, Any]]:
         res = _close_position(p)
         logger.info("Close profit ticket {} profit={} -> {}", p.ticket, p.profit, res.message)
         results.append({"ticket": p.ticket, "profit": p.profit, **res.to_dict()})
+    return results
+
+
+def set_all_position_level(
+    level: str,
+    price: float,
+    symbol: str | None = None,
+) -> list[dict[str, Any]]:
+    """Set one absolute SL or TP on every account position for one symbol."""
+    if not MT5_AVAILABLE or not connection.ensure_connected():
+        return [{"ok": False, "message": "MT5 not connected"}]
+    ok, why = _validate_trade_permissions()
+    if not ok:
+        return [{"ok": False, "message": f"permission check failed: {why}"}]
+    symbol = symbol or settings.symbol
+    info = connection.symbol_info(symbol) or {}
+    tick = mt5.symbol_info_tick(symbol)
+    if tick is None:
+        return [{"ok": False, "message": "no tick price"}]
+    digits = int(info.get("digits", 5) or 5)
+    target = round(float(price), digits)
+    level = level.upper()
+    positions = mt5.positions_get(symbol=symbol) or []
+    results: list[dict[str, Any]] = []
+    for position in positions:
+        is_buy = position.type == mt5.POSITION_TYPE_BUY
+        valid = (
+            (level == "SL" and ((is_buy and target < tick.bid) or (not is_buy and target > tick.ask)))
+            or (level == "TP" and ((is_buy and target > tick.bid) or (not is_buy and target < tick.ask)))
+        )
+        if not valid:
+            side = "BUY" if is_buy else "SELL"
+            results.append({
+                "ticket": position.ticket,
+                "ok": False,
+                "message": f"{level} {target} invalid for {side} at bid={tick.bid} ask={tick.ask}",
+            })
+            continue
+        request = {
+            "action": mt5.TRADE_ACTION_SLTP,
+            "symbol": symbol,
+            "position": position.ticket,
+            "sl": target if level == "SL" else position.sl,
+            "tp": target if level == "TP" else position.tp,
+            "magic": settings.magic_number,
+        }
+        result = _send(request)
+        results.append({"ticket": position.ticket, "level": level, "price": target, **result.to_dict()})
     return results
 
 
@@ -273,6 +354,54 @@ def update_trailing_stop(symbol: str | None = None) -> list[dict[str, Any]]:
     tick = mt5.symbol_info_tick(symbol)
     if tick is None:
         return []
+
+    money_step = settings.trailing_profit_step_money
+    if money_step > 0:
+        tick_size = float(info.get("trade_tick_size", point) or point)
+        tick_value = float(info.get("trade_tick_value", 0.0) or 0.0)
+        digits = int(info.get("digits", 5) or 5)
+        min_stop = float(info.get("trade_stops_level", 0) or 0) * point
+        positions = mt5.positions_get(symbol=symbol) or []
+        results: list[dict[str, Any]] = []
+        for p in positions:
+            if p.magic != settings.magic_number or float(p.profit) < money_step:
+                continue
+            locked_money = math.floor(float(p.profit) / money_step) * money_step
+            value_per_price = (tick_value / tick_size) * float(p.volume) if tick_size > 0 else 0.0
+            if value_per_price <= 0:
+                continue
+            distance = locked_money / value_per_price
+            if p.type == mt5.POSITION_TYPE_BUY:
+                candidate = round(float(p.price_open) + distance, digits)
+                broker_max = tick.bid - min_stop
+                if candidate >= broker_max or (p.sl and candidate <= p.sl):
+                    continue
+            else:
+                candidate = round(float(p.price_open) - distance, digits)
+                broker_min = tick.ask + min_stop
+                if candidate <= broker_min or (p.sl and candidate >= p.sl):
+                    continue
+            request = {
+                "action": mt5.TRADE_ACTION_SLTP,
+                "symbol": symbol,
+                "position": p.ticket,
+                "sl": candidate,
+                "tp": p.tp,
+                "magic": settings.magic_number,
+            }
+            res = _send(request)
+            logger.info(
+                "Money trailing ticket {} profit={} lock={} SL={} -> {}",
+                p.ticket, round(float(p.profit), 2), locked_money, candidate, res.message,
+            )
+            results.append({
+                "ticket": p.ticket,
+                "floating_profit": round(float(p.profit), 2),
+                "locked_profit": locked_money,
+                "new_sl": candidate,
+                **res.to_dict(),
+            })
+        return results
 
     start_dist = settings.trailing_start_points * point
     step_dist = settings.trailing_step_points * point

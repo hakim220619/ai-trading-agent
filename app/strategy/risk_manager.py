@@ -105,6 +105,7 @@ def build_trade_plan(
     swing_low: float | None = None,
     symbol: str | None = None,
     atr_mult: float = 1.5,
+    risk_reward: float | None = None,
 ) -> TradePlan:
     """Build a full trade plan (SL/TP/lot) for a BUY or SELL.
 
@@ -113,7 +114,7 @@ def build_trade_plan(
     """
     symbol = symbol or settings.symbol
     direction = direction.upper()
-    rr = settings.risk_reward
+    rr = settings.risk_reward if risk_reward is None else risk_reward
     atr_dist = max(atr_value * atr_mult, entry * 0.0005)  # floor to avoid tiny SL
 
     if direction == "BUY":

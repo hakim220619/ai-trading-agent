@@ -128,7 +128,6 @@ MT5_LOGIN=12345678
 MT5_PASSWORD=your-password
 MT5_SERVER=Your-Broker-Server
 
-SYMBOL=XAUUSD
 TIMEFRAMES=M1,M5,M15,H1
 CANDLES=500
 
@@ -201,6 +200,36 @@ print_report(run_backtest(load_candles_csv('data/XAUUSD_M5.csv')))"
 
 The report includes: trades, win rate, net profit, ROI, profit factor, average
 win/loss, and max drawdown.
+
+### Separate M1 and M5 scalping strategies
+
+Run the two-year XAUUSD M1 export and backtest manually from PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\backtest_xauusd_m1_2y.ps1
+```
+
+Optional overrides:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\backtest_xauusd_m1_2y.ps1 -StartBalance 50 -FixedLot 0.02 -SessionStart 13 -SessionHours 3
+```
+
+Before exporting, set MT5 `Tools > Options > Charts > Max bars in chart` high
+enough for two years of M1 history and restart MT5. The exporter prints a
+warning when the broker/terminal returns a shorter period than requested.
+
+Two independent scalping engines are available under `app/strategy`:
+
+- `scalping_m1_strategy.py`: fast EMA trend-pullback entries for M1.
+- `scalping_m5_strategy.py`: trend-aligned range breakouts for M5.
+
+Both select crypto, metals, or standard-market risk parameters automatically,
+including broker symbol variants such as `BTCUSDm` and `XAUUSD.pro`. Use
+`prepare_m1_features` / `generate_m1_signal` / `build_m1_plan` for M1, and the
+equivalent `m5` functions for M5. Signals must be evaluated on closed candles.
+Spread filters and ATR-based SL/TP remain mandatory; the default risk per scalp
+plan is 0.5 percent.
 
 ### Standalone universal day-trade strategy
 

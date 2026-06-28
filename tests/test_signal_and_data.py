@@ -70,6 +70,17 @@ class SignalTests(unittest.TestCase):
         self.assertEqual(result.action, "HOLD")
         self.assertIn("MTF blocked BUY", result.reasons[-1])
 
+    @patch("app.strategy.signal_generator._spread_ok", return_value=(False, 700.0))
+    @patch(
+        "app.strategy.signal_generator.predict_signal",
+        return_value={"buy": 0.836, "sell": 0.165, "model": True},
+    )
+    def test_hold_from_high_spread_keeps_ml_confidence(self, _predict, _spread) -> None:
+        signal = generate_signal(_feature_frame())
+        self.assertEqual(signal.action, "HOLD")
+        self.assertEqual(signal.confidence, 0.836)
+        self.assertIn("spread too high", signal.reasons[0])
+
     @patch("app.strategy.signal_generator.sr.is_near_resistance", return_value=False)
     @patch("app.strategy.signal_generator.sr.is_near_support", return_value=True)
     @patch("app.strategy.signal_generator._spread_ok", return_value=(True, 12.0))

@@ -41,13 +41,16 @@ class Settings(BaseSettings):
     risk_percent: float = Field(default=1.0)
     risk_reward: float = Field(default=2.0)
     max_spread_points: int = Field(default=300)
-    max_open_positions: int = Field(default=2)
+    max_open_positions: int = Field(default=3, ge=1)
+    btcusd_min_lot: float = Field(default=0.05, gt=0.0)
+    xauusd_min_lot: float = Field(default=0.01, gt=0.0)
 
     # --- Behaviour / safety ---
     trading_enabled: bool = Field(default=False)
     auto_start: bool = Field(default=False)
     target_profit_money: float = Field(default=5.0)
     trailing_stop: bool = Field(default=True)
+    trailing_profit_step_money: float = Field(default=1.0, ge=0.0)
     trailing_start_points: int = Field(default=200)
     trailing_step_points: int = Field(default=100)
     magic_number: int = Field(default=220619)

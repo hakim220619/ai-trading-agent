@@ -6,6 +6,8 @@
   <meta name="description" content="Dashboard monitoring AI Trading Agent">
   <title>AI Trading Agent</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-sRIl4kxILFvY47J16cr9ZwB07vP4J8+LH7qKQnuqkuIAvNWLzeN8tE5YBujZqJLB" crossorigin="anonymous">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+  <link href="https://cdn.datatables.net/2.3.8/css/dataTables.bootstrap5.min.css" rel="stylesheet">
   <style>
     :root { --app-bg:#080d18; --panel:#111827; --line:rgba(148,163,184,.15); }
     body { min-height:100vh; background:radial-gradient(circle at 15% 0%,#172554 0,transparent 32%),var(--app-bg); }
@@ -32,6 +34,26 @@
     .table { --bs-table-bg:transparent; margin:0; }
     .table > :not(caption) > * > * { border-color:var(--line); padding:.8rem .65rem; }
     .table thead th { color:#94a3b8; font-size:.7rem; letter-spacing:.07em; text-transform:uppercase; white-space:nowrap; }
+    #capitalChart { width:100%; height:260px; display:block; }
+    .chart-wrap { position:relative; }
+    .chart-tooltip { position:absolute; z-index:5; pointer-events:none; min-width:170px; padding:.65rem .75rem; border-radius:10px; background:rgba(2,6,23,.94); border:1px solid rgba(96,165,250,.35); box-shadow:0 10px 28px rgba(0,0,0,.35); font-size:.76rem; transform:translate(12px,-50%); }
+    .history-chip { display:inline-flex; align-items:center; gap:.55rem; min-width:112px; padding:.55rem .75rem; border-radius:13px; border:1px solid var(--chip-border); background:var(--chip-bg); color:var(--chip-color); box-shadow:0 6px 18px rgba(0,0,0,.1); transition:transform .2s ease,box-shadow .2s ease; }
+    .history-chip:hover { transform:translateY(-2px); box-shadow:0 9px 24px rgba(0,0,0,.16); }
+    .history-chip i { width:29px; height:29px; flex:0 0 29px; display:grid; place-items:center; border-radius:9px; background:var(--chip-icon); font-size:.9rem; }
+    .history-chip small { display:block; color:inherit; opacity:.72; font-size:.62rem; font-weight:750; letter-spacing:.06em; text-transform:uppercase; line-height:1; margin-bottom:.2rem; }
+    .history-chip strong { display:block; color:inherit; font-size:.9rem; line-height:1.1; white-space:nowrap; }
+    .chip-primary { --chip-color:#93c5fd; --chip-bg:rgba(37,99,235,.11); --chip-border:rgba(96,165,250,.28); --chip-icon:rgba(37,99,235,.22); }
+    .chip-success { --chip-color:#6ee7b7; --chip-bg:rgba(5,150,105,.11); --chip-border:rgba(52,211,153,.28); --chip-icon:rgba(5,150,105,.22); }
+    .chip-danger { --chip-color:#fca5a5; --chip-bg:rgba(220,38,38,.11); --chip-border:rgba(248,113,113,.28); --chip-icon:rgba(220,38,38,.22); }
+    .chip-net-positive { --chip-color:#5eead4; --chip-bg:linear-gradient(135deg,rgba(13,148,136,.15),rgba(5,150,105,.08)); --chip-border:rgba(45,212,191,.3); --chip-icon:rgba(13,148,136,.24); }
+    .chip-net-negative { --chip-color:#fda4af; --chip-bg:linear-gradient(135deg,rgba(225,29,72,.15),rgba(220,38,38,.08)); --chip-border:rgba(251,113,133,.3); --chip-icon:rgba(225,29,72,.24); }
+    body[data-theme="night"] { --app-bg:#020409; --panel:#080c14; --line:rgba(100,116,139,.18); background:radial-gradient(circle at 15% 0%,#0b1739 0,transparent 28%),var(--app-bg); }
+    body[data-theme="night"] .app-card { background:rgba(8,12,20,.96); }
+    body[data-theme="light"] { --app-bg:#eef2ff; --panel:#fff; --line:rgba(51,65,85,.14); background:radial-gradient(circle at 15% 0%,#dbeafe 0,transparent 35%),var(--app-bg); color:#0f172a; }
+    body[data-theme="light"] .navbar { background:rgba(255,255,255,.9)!important; }
+    body[data-theme="light"] .app-card { background:rgba(255,255,255,.94); box-shadow:0 12px 35px rgba(15,23,42,.08); }
+    body[data-theme="light"] .detail-item,body[data-theme="light"] .status-pill { background:rgba(241,245,249,.9); }
+    body[data-theme="light"] .chart-tooltip { background:rgba(255,255,255,.98); color:#0f172a; }
     .empty-state { min-height:145px; display:grid; place-items:center; color:#64748b; text-align:center; }
     .detail-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.8rem; }
     .detail-item { padding:.75rem; border-radius:12px; background:rgba(15,23,42,.7); border:1px solid var(--line); overflow:hidden; }
@@ -48,14 +70,15 @@
     @media (max-width:575.98px) { .metric-value{font-size:1.25rem}.detail-grid{grid-template-columns:1fr}.app-card{border-radius:14px} }
   </style>
 </head>
-<body>
+<body data-theme="dark">
   <nav class="navbar sticky-top py-3">
     <div class="container-xl">
       <div class="d-flex align-items-center gap-3">
-        <div class="brand-mark" aria-hidden="true">AI</div>
+        <div class="brand-mark" aria-hidden="true"><i class="bi bi-graph-up-arrow"></i></div>
         <div><div class="fw-bold lh-1">AI Trading Agent</div><small class="text-secondary" id="navSymbol">Memuat market...</small></div>
       </div>
       <div class="d-flex align-items-center gap-2 ms-auto">
+        <button id="themeToggleBtn" class="btn btn-sm btn-outline-secondary rounded-circle" onclick="cycleTheme()" title="Ganti tema" aria-label="Ganti tema"><i class="bi bi-moon-stars"></i></button>
         <span id="modeBadge" class="badge rounded-pill text-bg-secondary">MEMUAT</span>
         <span id="botBadge" class="badge rounded-pill text-bg-secondary d-none d-sm-inline">BOT --</span>
       </div>
@@ -64,27 +87,33 @@
 
   <main class="container-xl py-4 py-lg-5">
     <div id="errorAlert" class="alert alert-danger d-none" role="alert"></div>
-    <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3 mb-4">
+    <div class="mb-4">
       <div><h1 class="h3 fw-bold mb-1">Trading Overview</h1><p class="text-secondary mb-0">Monitoring akun, sinyal, dan posisi secara real-time.</p></div>
-      <div class="d-flex flex-wrap gap-2">
-        <button class="btn btn-success action-btn" onclick="runAction('/trade/start','POST')">Mulai Bot</button>
-        <button class="btn btn-outline-light action-btn" onclick="runAction('/trade/stop','POST')">Stop Bot</button>
-        <button class="btn btn-outline-danger" data-bs-toggle="modal" data-bs-target="#closeModal">Tutup Semua</button>
-        <button id="refreshBtn" class="btn btn-primary" onclick="refreshDashboard(true)"><span id="refreshSpinner" class="spinner-border spinner-border-sm d-none" aria-hidden="true"></span> Refresh</button>
-      </div>
+      <div class="app-card p-3 mt-3"><div class="d-flex justify-content-between align-items-start gap-3 mb-2"><div class="section-label"><i class="bi bi-toggles me-1"></i>Kontrol Trading</div><div class="d-flex align-items-center gap-2"><small id="updatedAt" class="text-secondary text-end"><i class="bi bi-clock me-1"></i>--</small><button class="btn btn-sm btn-outline-info rounded-circle" onclick="showStrategies()" title="Lihat strategi yang digunakan" aria-label="Lihat strategi"><i class="bi bi-info-lg"></i></button></div></div><div class="d-flex flex-wrap gap-2">
+        <div class="input-group" style="width:175px"><span class="input-group-text"><i class="bi bi-currency-exchange"></i></span><select id="marketSelect" class="form-select fw-semibold" onchange="changeMarket(this.value)" aria-label="Pilih market"><option value="BTCUSD">BTCUSD</option><option value="XAUUSD">XAUUSD</option></select></div>
+        <div class="d-flex align-items-center gap-3 px-3 border rounded-3" title="Market yang dipantau Auto Confidence"><span class="small text-secondary"><i class="bi bi-broadcast me-1"></i>Auto:</span><div class="form-check form-switch mb-0"><input id="autoMarketBTC" class="form-check-input" type="checkbox" onchange="changeAutoMarkets()" checked><label class="form-check-label small fw-semibold" for="autoMarketBTC">BTCUSD</label></div><div class="form-check form-switch mb-0"><input id="autoMarketXAU" class="form-check-input" type="checkbox" onchange="changeAutoMarkets()" checked><label class="form-check-label small fw-semibold" for="autoMarketXAU">XAUUSD</label></div></div>
+        <button id="confidenceToggleBtn" class="btn btn-warning action-btn" onclick="toggleConfidenceAuto()"><i class="bi bi-robot me-1"></i>Start Auto Confidence</button>
+        <button class="btn btn-outline-danger" data-bs-toggle="modal" data-bs-target="#closeModal"><i class="bi bi-x-octagon me-1"></i>Tutup Semua</button>
+        <button class="btn btn-success" onclick="openManualTrade('BUY')"><i class="bi bi-arrow-up-circle me-1"></i>BUY</button>
+        <button class="btn btn-danger" onclick="openManualTrade('SELL')"><i class="bi bi-arrow-down-circle me-1"></i>SELL</button>
+        <button id="refreshBtn" class="btn btn-primary" onclick="refreshDashboard(true)"><span id="refreshSpinner" class="spinner-border spinner-border-sm d-none" aria-hidden="true"></span><i class="bi bi-arrow-clockwise me-1"></i>Refresh</button>
+      </div></div>
     </div>
     <div id="actionAlert" class="alert alert-info d-none" role="status"></div>
+    <section class="app-card p-3 mb-4">
+      <div class="d-flex flex-column flex-lg-row align-items-lg-end gap-3"><div class="me-lg-auto"><div class="section-label mb-1"><i class="bi bi-sliders me-1"></i>Kelola Semua Posisi Market Aktif</div><div class="small text-secondary">Harga diterapkan ke seluruh posisi pada simbol dropdown saat ini.</div></div><div><label for="bulkSlPrice" class="form-label small mb-1">Harga Stop Loss</label><div class="input-group"><input id="bulkSlPrice" type="number" min="0" step="0.001" class="form-control" placeholder="Contoh: 4000"><button class="btn btn-outline-danger action-btn" onclick="executeBulkLevel('SL')"><i class="bi bi-shield-x me-1"></i>Set Semua SL</button></div></div><div><label for="bulkTpPrice" class="form-label small mb-1">Harga Take Profit</label><div class="input-group"><input id="bulkTpPrice" type="number" min="0" step="0.001" class="form-control" placeholder="Contoh: 4050"><button class="btn btn-outline-success action-btn" onclick="executeBulkLevel('TP')"><i class="bi bi-bullseye me-1"></i>Set Semua TP</button></div></div></div>
+    </section>
 
     <section class="row g-3 mb-4" aria-label="Ringkasan akun">
-      <div class="col-6 col-lg-3"><div id="balanceCard" class="app-card metric-card h-100 p-3 p-lg-4" style="--glow:rgba(59,130,246,.22)"><div class="d-flex justify-content-between align-items-center mb-3"><div class="metric-label">Saldo</div><div class="metric-icon">$</div></div><div id="balanceValue" class="metric-value skeleton">--</div><small id="currencyValue" class="text-secondary">Mata uang akun</small></div></div>
-      <div class="col-6 col-lg-3"><div class="app-card metric-card h-100 p-3 p-lg-4" style="--glow:rgba(124,58,237,.22)"><div class="d-flex justify-content-between align-items-center mb-3"><div class="metric-label">Equity</div><div class="metric-icon" style="color:#c4b5fd;background:rgba(124,58,237,.14)">E</div></div><div id="equityValue" class="metric-value skeleton">--</div><small class="text-secondary">Nilai akun berjalan</small></div></div>
-      <div class="col-6 col-lg-3"><div id="profitCard" class="app-card metric-card profit-neutral h-100 p-3 p-lg-4"><div class="d-flex justify-content-between align-items-center mb-3"><div class="metric-label">Profit / Loss</div><div id="profitIcon" class="metric-icon">↔</div></div><div id="profitValue" class="metric-value skeleton">--</div><div id="profitState" class="profit-state text-secondary mt-1">BELUM ADA POSISI</div></div></div>
-      <div class="col-6 col-lg-3"><div class="app-card metric-card h-100 p-3 p-lg-4" style="--glow:rgba(245,158,11,.22)"><div class="d-flex justify-content-between align-items-center mb-3"><div class="metric-label">Posisi Terbuka</div><div class="metric-icon" style="color:#fcd34d;background:rgba(245,158,11,.14)">#</div></div><div id="positionCount" class="metric-value skeleton">--</div><small class="text-secondary">Dengan magic number bot</small></div></div>
+      <div class="col-6 col-lg-3"><div id="balanceCard" class="app-card metric-card h-100 p-3 p-lg-4" style="--glow:rgba(59,130,246,.22)"><div class="d-flex justify-content-between align-items-center mb-3"><div class="metric-label">Saldo</div><div class="metric-icon"><i class="bi bi-wallet2"></i></div></div><div id="balanceValue" class="metric-value skeleton">--</div><small id="currencyValue" class="text-secondary">Mata uang akun</small></div></div>
+      <div class="col-6 col-lg-3"><div class="app-card metric-card h-100 p-3 p-lg-4" style="--glow:rgba(124,58,237,.22)"><div class="d-flex justify-content-between align-items-center mb-3"><div class="metric-label">Equity</div><div class="metric-icon" style="color:#c4b5fd;background:rgba(124,58,237,.14)"><i class="bi bi-bar-chart-line"></i></div></div><div id="equityValue" class="metric-value skeleton">--</div><small class="text-secondary">Nilai akun berjalan</small></div></div>
+      <div class="col-6 col-lg-3"><div id="profitCard" class="app-card metric-card profit-neutral h-100 p-3 p-lg-4"><div class="d-flex justify-content-between align-items-center mb-3"><div class="metric-label">Profit / Loss</div><div id="profitIcon" class="metric-icon"><i class="bi bi-arrow-left-right"></i></div></div><div id="profitValue" class="metric-value skeleton">--</div><div id="profitState" class="profit-state text-secondary mt-1">BELUM ADA POSISI</div></div></div>
+      <div class="col-6 col-lg-3"><div class="app-card metric-card h-100 p-3 p-lg-4" style="--glow:rgba(245,158,11,.22)"><div class="d-flex justify-content-between align-items-center mb-3"><div class="metric-label">Posisi Terbuka</div><div class="metric-icon" style="color:#fcd34d;background:rgba(245,158,11,.14)"><i class="bi bi-briefcase"></i></div></div><div id="positionCount" class="metric-value skeleton">--</div><small class="text-secondary">Semua posisi akun</small></div></div>
     </section>
 
     <section class="row g-4 mb-4">
       <div class="col-xl-5"><div class="app-card h-100 p-4">
-        <div class="d-flex justify-content-between align-items-start mb-4"><div><div class="section-label mb-1">Kondisi Sistem</div><h2 class="h5 mb-0">Status &amp; Permissions</h2></div><small id="updatedAt" class="text-secondary">--</small></div>
+        <div class="d-flex justify-content-between align-items-start mb-4"><div><div class="section-label mb-1"><i class="bi bi-cpu me-1"></i>Kondisi Sistem</div><h2 class="h5 mb-0">Status &amp; Permissions <span class="badge rounded-pill text-bg-success ms-1"><span class="status-dot bg-light"></span>LIVE</span></h2></div></div>
         <div id="statusPills" class="d-flex flex-wrap gap-2 mb-4"><span class="skeleton">Mengambil status...</span></div>
         <div class="detail-grid">
           <div class="detail-item"><small>Symbol</small><strong id="statusSymbol">--</strong></div><div class="detail-item"><small>Timeframes</small><strong id="statusTimeframes">--</strong></div>
@@ -92,9 +121,10 @@
         </div>
       </div></div>
       <div class="col-xl-7"><div class="app-card h-100 p-4">
-        <div class="d-flex justify-content-between align-items-start gap-3 mb-3"><div><div class="section-label mb-1">Analisis M5</div><h2 class="h5 mb-0">Sinyal Terbaru</h2></div><span id="signalBadge" class="badge rounded-pill text-bg-secondary signal-action">--</span></div>
+        <div class="d-flex justify-content-between align-items-start gap-3 mb-3"><div><div class="section-label mb-1"><i class="bi bi-activity me-1"></i>Analisis M5</div><h2 class="h5 mb-0"><i class="bi bi-broadcast-pin me-2"></i>Sinyal Terbaru</h2></div><span id="signalBadge" class="badge rounded-pill text-bg-secondary signal-action">--</span></div>
         <div class="d-flex justify-content-between small mb-2"><span class="text-secondary">Confidence</span><strong id="confidenceText">0%</strong></div>
         <div class="progress mb-4"><div id="confidenceBar" class="progress-bar" style="width:0%"></div></div>
+        <div class="detail-item mb-4 d-flex justify-content-between align-items-center"><div><small>Rekomendasi (confidence &gt;= 65%)</small><strong id="recommendationText" class="d-block">WAIT</strong></div><span id="recommendationBadge" class="badge rounded-pill text-bg-secondary signal-action">WAIT</span></div>
         <div class="row g-3 mb-4">
           <div class="col-6 col-md-3"><div class="detail-item"><small>Harga</small><strong id="signalPrice">--</strong></div></div><div class="col-6 col-md-3"><div class="detail-item"><small>ATR</small><strong id="signalAtr">--</strong></div></div>
           <div class="col-6 col-md-3"><div class="detail-item"><small>ML Buy</small><strong id="mlBuy">--</strong></div></div><div class="col-6 col-md-3"><div class="detail-item"><small>ML Sell</small><strong id="mlSell">--</strong></div></div>
@@ -113,20 +143,35 @@
     </section>
 
     <section class="row g-4 mb-4">
-      <div class="col-lg-5"><div class="app-card h-100 p-4"><div class="section-label mb-1">Risk Management</div><h2 class="h5 mb-4">Rencana Entry, SL &amp; TP</h2><div id="tradePlan" class="empty-state"><div><div class="fs-3 mb-2">◎</div><div>Belum ada rencana trade.</div><small>Plan muncul saat sinyal BUY atau SELL valid.</small></div></div></div></div>
-      <div class="col-lg-7"><div class="app-card h-100 p-4"><div class="section-label mb-1">Informasi Broker</div><h2 class="h5 mb-4">Detail Akun</h2><div id="accountDetails" class="detail-grid"><div class="skeleton">Mengambil informasi akun...</div></div></div></div>
+      <div class="col-lg-5"><div class="app-card h-100 p-4"><div class="section-label mb-1"><i class="bi bi-shield-check me-1"></i>Risk Management</div><h2 class="h5 mb-4"><i class="bi bi-crosshair me-2"></i>Rencana Entry, SL &amp; TP</h2><div id="tradePlan" class="empty-state"><div><div class="fs-3 mb-2"><i class="bi bi-bullseye"></i></div><div>Belum ada rencana trade.</div><small>Plan muncul saat sinyal BUY atau SELL valid.</small></div></div></div></div>
+      <div class="col-lg-7"><div class="app-card h-100 p-4"><div class="d-flex justify-content-between align-items-start mb-4"><div><div class="section-label mb-1"><i class="bi bi-bank me-1"></i>Informasi Broker</div><h2 class="h5 mb-0"><i class="bi bi-person-vcard me-2"></i>Detail Akun</h2></div><div id="accountActions"></div></div><div id="accountDetails" class="detail-grid"><div class="skeleton">Mengambil informasi akun...</div></div></div></div>
     </section>
 
     <section class="app-card overflow-hidden mb-4">
-      <div class="p-4 d-flex justify-content-between align-items-center"><div><div class="section-label mb-1">Portfolio Bot</div><h2 class="h5 mb-0">Posisi Terbuka</h2></div><span id="positionBadge" class="badge rounded-pill text-bg-secondary">0 posisi</span></div>
+      <div class="p-4 d-flex justify-content-between align-items-center"><div><div class="section-label mb-1"><i class="bi bi-briefcase me-1"></i>Portfolio Akun</div><h2 class="h5 mb-0"><i class="bi bi-lightning-charge me-2"></i>Posisi Aktif &amp; Floating P/L</h2></div><span id="positionBadge" class="badge rounded-pill text-bg-secondary">0 posisi</span></div>
       <div class="table-responsive"><table class="table table-hover align-middle"><thead><tr><th>Ticket</th><th>Type</th><th>Symbol</th><th>Lot</th><th>Open</th><th>SL</th><th>TP</th><th class="text-end">Profit</th></tr></thead><tbody id="positionsBody"><tr><td colspan="8"><div class="empty-state">Belum ada posisi terbuka.</div></td></tr></tbody></table></div>
+    </section>
+    <section class="app-card p-4 mb-4">
+      <div class="d-flex flex-column flex-md-row justify-content-between gap-3 mb-3"><div><div class="section-label mb-1"><i class="bi bi-graph-up me-1"></i>Pertumbuhan Akun</div><h2 class="h5 mb-0"><i class="bi bi-cash-stack me-2"></i>Modal Awal sampai Modal Saat Ini</h2></div><div class="d-flex flex-column flex-sm-row align-items-sm-center gap-2"><div id="capitalSummary" class="text-secondary small text-sm-end">Memuat kurva modal...</div><button id="capitalPlayBtn" type="button" class="btn btn-sm btn-outline-primary text-nowrap" onclick="playCapitalCurve()"><i class="bi bi-play-fill me-1"></i>Play</button></div></div>
+      <div class="chart-wrap"><canvas id="capitalChart" role="img" aria-label="Grafik perkembangan modal"></canvas><div id="capitalTooltip" class="chart-tooltip d-none"></div></div>
+    </section>
+    <section class="app-card overflow-hidden mb-4">
+      <div class="p-4 d-flex flex-column flex-md-row justify-content-between gap-3"><div><div class="section-label mb-1"><i class="bi bi-clock-history me-1"></i>Seluruh Riwayat Akun</div><h2 class="h5 mb-0"><i class="bi bi-journal-check me-2"></i>Trade Profit &amp; Loss</h2><small class="text-secondary">Urutan close terbaru ke terlama</small></div><div id="historySummary" class="d-flex flex-wrap gap-2"><span class="badge text-bg-secondary">Memuat...</span></div></div>
+      <div class="table-responsive p-3 pt-0"><table id="historyTable" class="table table-hover align-middle w-100"><thead><tr><th>Waktu (UTC)</th><th>Ticket</th><th>Symbol</th><th>Close Deal</th><th>Lot</th><th>Harga</th><th>Hasil</th><th class="text-end">Net P/L</th></tr></thead><tbody id="historyBody"><tr><td colspan="8"><div class="empty-state">Memuat riwayat trade...</div></td></tr></tbody></table></div>
     </section>
     <footer class="d-flex flex-column flex-sm-row justify-content-between gap-2 text-secondary small pb-4"><span>AI Trading Agent</span><span>Auto-refresh setiap 10 detik</span></footer>
   </main>
 
-  <div class="modal fade" id="closeModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-dialog-centered"><div class="modal-content app-card"><div class="modal-header border-secondary-subtle"><h2 class="modal-title fs-5">Tutup semua posisi bot?</h2><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div><div class="modal-body text-secondary">Semua posisi dengan magic number bot akan ditutup pada harga market. Tindakan ini tidak dapat dibatalkan.</div><div class="modal-footer border-secondary-subtle"><button type="button" class="btn btn-outline-light" data-bs-dismiss="modal">Batal</button><button type="button" class="btn btn-danger action-btn" onclick="closeAll()">Ya, Tutup Semua</button></div></div></div></div>
+  <div class="modal fade" id="closeModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-dialog-centered"><div class="modal-content app-card"><div class="modal-header border-secondary-subtle"><h2 class="modal-title fs-5"><i class="bi bi-exclamation-triangle me-2 text-warning"></i>Tutup semua posisi akun?</h2><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div><div class="modal-body text-secondary">Semua posisi MT5 pada seluruh simbol, termasuk posisi manual, akan ditutup pada harga market. Tindakan ini tidak dapat dibatalkan.</div><div class="modal-footer border-secondary-subtle"><button type="button" class="btn btn-outline-light" data-bs-dismiss="modal"><i class="bi bi-arrow-left me-1"></i>Batal</button><button type="button" class="btn btn-danger action-btn" onclick="closeAll()"><i class="bi bi-x-circle me-1"></i>Ya, Tutup Semua</button></div></div></div></div>
+  <div class="modal fade" id="manualTradeModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-dialog-centered"><div class="modal-content app-card"><div class="modal-header border-secondary-subtle"><h2 id="manualTradeTitle" class="modal-title fs-5">Konfirmasi Order Manual</h2><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div><div class="modal-body"><div id="manualTradeWarning" class="alert alert-warning small"><i class="bi bi-exclamation-triangle me-1"></i>Order manual memakai harga market dan boleh melewati batas spread bot. SL dan TP dihitung ulang dari ATR terbaru.</div><label for="manualLot" class="form-label">Lot</label><input id="manualLot" class="form-control" type="number" min="0.01" step="0.01" value="0.01"><div id="manualTradeInfo" class="text-secondary small mt-3"></div></div><div class="modal-footer border-secondary-subtle"><button type="button" class="btn btn-outline-light" data-bs-dismiss="modal"><i class="bi bi-arrow-left me-1"></i>Batal</button><button id="manualTradeConfirm" type="button" class="btn btn-success action-btn" onclick="executeManualTrade()"><i class="bi bi-check-circle me-1"></i>Konfirmasi BUY</button></div></div></div></div>
+  <div class="modal fade" id="strategiesModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-dialog-centered modal-lg"><div class="modal-content app-card"><div class="modal-header border-secondary-subtle"><h2 class="modal-title fs-5"><i class="bi bi-diagram-3 me-2 text-info"></i>Strategi Trading</h2><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div><div id="strategiesContent" class="modal-body"><div class="skeleton">Memuat strategi...</div></div><div class="modal-footer border-secondary-subtle"><button type="button" class="btn btn-outline-light" data-bs-dismiss="modal"><i class="bi bi-check2 me-1"></i>Tutup</button></div></div></div></div>
+  <div class="modal fade" id="accountLoginModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-dialog-centered"><div class="modal-content app-card"><div class="modal-header border-secondary-subtle"><h2 class="modal-title fs-5"><i class="bi bi-box-arrow-in-right me-2 text-success"></i>Login Akun MT5</h2><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div><div class="modal-body"><div class="mb-3"><label for="mt5Login" class="form-label">Nomor Akun</label><input id="mt5Login" type="number" min="1" class="form-control" autocomplete="username"></div><div class="mb-3"><label for="mt5Password" class="form-label">Password</label><input id="mt5Password" type="password" class="form-control" autocomplete="current-password"></div><div><label for="mt5Server" class="form-label">Server</label><input id="mt5Server" type="text" class="form-control" placeholder="Contoh: Exness-MT5Trial17"></div><div class="form-text mt-3"><i class="bi bi-shield-lock me-1"></i>Password tidak disimpan oleh dashboard.</div></div><div class="modal-footer border-secondary-subtle"><button type="button" class="btn btn-outline-light" data-bs-dismiss="modal">Batal</button><button id="accountLoginBtn" type="button" class="btn btn-success action-btn" onclick="loginAccount()"><i class="bi bi-box-arrow-in-right me-1"></i>Login</button></div></div></div></div>
 
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/js/bootstrap.bundle.min.js" integrity="sha384-FKyoEForCGlyvwx9Hj09JcYn3nv7wiPVlz7YYwJrWVcXK/BmnVDxM+D2scQbITxI" crossorigin="anonymous"></script>
+  <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+  <script src="https://cdn.datatables.net/2.3.8/js/dataTables.min.js"></script>
+  <script src="https://cdn.datatables.net/2.3.8/js/dataTables.bootstrap5.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
   <script>
     const el=id=>document.getElementById(id);
     const esc=value=>String(value??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
@@ -134,6 +179,10 @@
     const amount=(value,currency)=>`${numeric(value,2)} ${esc(currency||'')}`.trim();
     const percent=value=>`${numeric(Number(value||0)*100,1)}%`;
     const reducedMotion=window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    let manualDirection='BUY',latestSignalPayload=null,activeSymbol='--',marketChanging=false,autoMarketsChanging=false,botRunning=false,confidenceAuto=false,currentTheme='dark',historyDataTable=null,capitalAnimationFrame=null;
+    const themes=['light','dark','night'];
+    function applyTheme(theme){currentTheme=themes.includes(theme)?theme:'dark';document.body.dataset.theme=currentTheme;document.documentElement.setAttribute('data-bs-theme',currentTheme==='light'?'light':'dark');localStorage.setItem('dashboard-theme',currentTheme);const icons={light:'bi-sun',dark:'bi-moon-stars',night:'bi-stars'},labels={light:'Light',dark:'Dark',night:'Night'};el('themeToggleBtn').innerHTML=`<i class="bi ${icons[currentTheme]}"></i>`;el('themeToggleBtn').title=`Tema ${labels[currentTheme]} · klik untuk mengganti`;}
+    function cycleTheme(){applyTheme(themes[(themes.indexOf(currentTheme)+1)%themes.length]);renderCapitalCurve(window._lastCapitalCurve||{points:[]});}
 
     function animateMetric(id,value,suffix='',digits=2){
       const node=el(id); if(value==null){node.textContent='--';return;}
@@ -148,23 +197,35 @@
 
     function renderStatus(s){
       el('navSymbol').textContent=`${s.symbol} · ${(s.timeframes||[]).join(' / ')}`;
+      activeSymbol=s.symbol||'--';if(['BTCUSD','XAUUSD'].includes(activeSymbol))el('marketSelect').value=activeSymbol;
+      const autoSymbols=s.auto_symbols||[];el('autoMarketBTC').checked=autoSymbols.includes('BTCUSD');el('autoMarketXAU').checked=autoSymbols.includes('XAUUSD');
+      syncManualLot(activeSymbol);
+      botRunning=Boolean(s.running);confidenceAuto=Boolean(s.confidence_auto);el('confidenceToggleBtn').className=`btn ${confidenceAuto?'btn-outline-warning':'btn-warning'} action-btn`;el('confidenceToggleBtn').innerHTML=confidenceAuto?'<i class="bi bi-pause-circle me-1"></i>Stop Auto Confidence':'<i class="bi bi-robot me-1"></i>Start Auto Confidence';
       el('modeBadge').textContent=s.trading_enabled?'LIVE TRADING':'SAFE MODE'; el('modeBadge').className=`badge rounded-pill ${s.trading_enabled?'text-bg-danger':'text-bg-success'}`;
-      el('botBadge').textContent=s.running?'BOT RUNNING':'BOT STOPPED'; el('botBadge').className=`badge rounded-pill d-none d-sm-inline ${s.running?'text-bg-success':'text-bg-secondary'}`;
+      el('botBadge').textContent=s.confidence_auto?'AUTO CONFIDENCE':s.running?'BOT RUNNING':'BOT STOPPED'; el('botBadge').className=`badge rounded-pill d-none d-sm-inline ${s.confidence_auto?'text-bg-warning':s.running?'text-bg-success':'text-bg-secondary'}`;
       animateMetric('balanceValue',s.account_balance,s.account_currency); animateMetric('equityValue',s.account_equity,s.account_currency); animateMetric('profitValue',s.total_profit,s.account_currency); animateMetric('positionCount',s.open_positions,'',0);
       const pnl=Number(s.total_profit||0),profitClass=pnl>0?'profit-positive':pnl<0?'profit-negative':'profit-neutral';
       el('profitCard').className=`app-card metric-card ${profitClass} h-100 p-3 p-lg-4`; el('profitValue').className=`metric-value ${pnl>0?'text-success':pnl<0?'text-danger':''}`;
-      el('profitIcon').textContent=pnl>0?'↗':pnl<0?'↘':'↔'; el('profitIcon').className=`metric-icon ${pnl>0?'text-success':pnl<0?'text-danger':''}`;
+      el('profitIcon').innerHTML=`<i class="bi ${pnl>0?'bi-arrow-up-right':pnl<0?'bi-arrow-down-right':'bi-arrow-left-right'}"></i>`; el('profitIcon').className=`metric-icon ${pnl>0?'text-success':pnl<0?'text-danger':''}`;
       el('profitState').textContent=pnl>0?'PROFIT BERJALAN':pnl<0?'LOSS BERJALAN':'BELUM ADA PROFIT / LOSS'; el('profitState').className=`profit-state mt-1 ${pnl>0?'text-success':pnl<0?'text-danger':'text-secondary'}`;
       ['balanceValue','equityValue','profitValue','positionCount'].forEach(id=>el(id).classList.remove('skeleton'));
       el('currencyValue').textContent=`Mata uang akun: ${s.account_currency||'--'}`;
-      el('statusPills').innerHTML=[pill('API Online',true),pill('MT5 Connected',s.mt5_connected),pill('Model Loaded',s.model_loaded),pill('Algo Trading',s.terminal_trade_allowed),pill('Account Trade',s.account_trade_allowed),pill('Python API',!s.trade_api_disabled)].join('');
-      el('statusSymbol').textContent=s.symbol; el('statusTimeframes').textContent=(s.timeframes||[]).join(', '); el('statusMode').textContent=s.trading_enabled?'LIVE':'SAFE'; el('statusModel').textContent=s.model_loaded?'Aktif':'Belum tersedia'; el('updatedAt').textContent=new Date().toLocaleTimeString('id-ID');
+      el('statusPills').innerHTML=[pill('API Online',true),pill('MT5 Connected',s.mt5_connected),pill('Model Loaded',s.model_loaded),pill('Algo Trading',s.terminal_trade_allowed),pill('Account Trade',s.account_trade_allowed),pill('Python API',!s.trade_api_disabled),`<span class="badge rounded-pill status-pill text-bg-primary"><i class="bi bi-layers me-1"></i>Maks ${s.max_open_positions} posisi/market</span>`].join('');
+      el('statusSymbol').textContent=s.symbol; el('statusTimeframes').textContent=(s.timeframes||[]).join(', '); el('statusMode').textContent=s.confidence_auto?'AUTO CONFIDENCE':s.trading_enabled?'LIVE':'SAFE'; el('statusModel').textContent=s.model_loaded?'Aktif':'Belum tersedia';
     }
 
+    function updateRealtimeClock(){const now=new Date();el('updatedAt').innerHTML=`<i class="bi bi-clock me-1"></i>${now.toLocaleDateString('id-ID',{weekday:'short',day:'2-digit',month:'short',year:'numeric'})}<br><strong>${now.toLocaleTimeString('id-ID',{hour12:false})}</strong>`;}
+    let statusPolling=false;
+    async function refreshStatusRealtime(){if(statusPolling)return;statusPolling=true;try{renderStatus(await api('/status'));}catch(_error){}finally{statusPolling=false;}}
+
     function renderSignal(payload){
+      latestSignalPayload=payload;
       const s=payload.signal||{},action=s.action||'HOLD',actionClass=action==='BUY'?'text-bg-success':action==='SELL'?'text-bg-danger':'text-bg-warning';
       el('signalBadge').textContent=action; el('signalBadge').className=`badge rounded-pill signal-action ${actionClass}`;
       const confidence=Math.max(0,Math.min(100,Number(s.confidence||0)*100)); el('confidenceText').textContent=`${numeric(confidence,1)}%`; el('confidenceBar').style.width=`${confidence}%`; el('confidenceBar').className=`progress-bar ${action==='BUY'?'bg-success':action==='SELL'?'bg-danger':'bg-warning'}`;
+      const mlBuy=Number(s.ml?.buy||0),mlSell=Number(s.ml?.sell||0),recommendation=confidence>=65?(mlBuy>=mlSell?'BUY':'SELL'):'WAIT',recommendationClass=recommendation==='BUY'?'text-bg-success':recommendation==='SELL'?'text-bg-danger':'text-bg-secondary';
+      const blocked=action==='HOLD'&&recommendation!=='WAIT',blockReason=(s.reasons||[])[0]||'filter teknis belum terpenuhi';
+      el('recommendationText').textContent=recommendation==='WAIT'?'Confidence belum mencapai 65%':blocked?`Rekomendasi ${recommendation} (analisis); eksekusi WAIT: ${blockReason}`:`Rekomendasi ${recommendation} - siap sesuai sinyal teknis`;el('recommendationBadge').textContent=recommendation;el('recommendationBadge').className=`badge rounded-pill signal-action ${recommendationClass}`;
       el('signalPrice').textContent=numeric(s.price,2); el('signalAtr').textContent=numeric(s.atr,2); el('mlBuy').textContent=percent(s.ml?.buy); el('mlSell').textContent=percent(s.ml?.sell);
       const levels=s.levels||{},trend=levels.structure_trend||'ranging',bos=levels.bos,choch=levels.choch;
       el('nearestSupport').textContent=numeric(levels.support,2); el('nearestResistance').textContent=numeric(levels.resistance,2);
@@ -177,10 +238,10 @@
 
     function renderTradePlan(plan){
       if(!plan){el('tradePlan').className='empty-state';el('tradePlan').innerHTML='<div><div class="fs-3 mb-2">◎</div><div>Belum ada rencana trade.</div><small>Plan muncul saat sinyal BUY atau SELL valid.</small></div>';return;}
-      el('tradePlan').className='detail-grid'; el('tradePlan').innerHTML=[['Direction',plan.direction],['Entry',numeric(plan.entry,2)],['Stop Loss',numeric(plan.stop_loss,2)],['Take Profit',numeric(plan.take_profit,2)],['Lot',numeric(plan.lot,2)],['Risk Money',numeric(plan.risk_money,2)],['Risk : Reward',`1 : ${numeric(plan.rr,1)}`]].map(([k,v])=>`<div class="detail-item"><small>${esc(k)}</small><strong>${esc(v)}</strong></div>`).join('');
+      const modeLabels={NEW_POSITION:'Posisi Baru',ADD_POSITION:'Tambah Posisi Searah',OPPOSITE_POSITION_OPEN:'Peringatan: Posisi Berlawanan Aktif',MANAGE_POSITION:'Kelola Posisi Aktif'},items=[['Status',plan.status||'READY'],['Mode',modeLabels[plan.position_mode]||plan.position_mode],['Posisi Aktif',plan.open_position_count??0],['Floating P/L',numeric(plan.open_floating_profit,2)]];if(plan.direction)items.push(['Direction',plan.direction],['Confidence',plan.confidence==null?'--':`${numeric(plan.confidence*100,1)}%`],['Entry Baru',numeric(plan.entry,2)],['Stop Loss Baru',numeric(plan.stop_loss,2)],['Target Profit Baru',numeric(plan.take_profit,2)],['Lot',numeric(plan.lot,2)],['Risk Money',numeric(plan.risk_money,2)],['Risk : Reward',`1 : ${numeric(plan.rr,1)}`]);const existing=(plan.open_positions||[]).map(p=>`<div class="detail-item"><small>#${esc(p.ticket)} · ${esc(p.direction)} · Lot ${numeric(p.lot,2)}</small><strong>Entry ${numeric(p.entry,2)}</strong><div class="small text-secondary">SL ${numeric(p.stop_loss,2)} · TP ${numeric(p.take_profit,2)} · <span class="${Number(p.floating_profit)>=0?'text-success':'text-danger'}">P/L ${numeric(p.floating_profit,2)}</span></div></div>`).join('');const addButton=plan.direction?`<button class="btn btn-sm ${plan.direction==='BUY'?'btn-success':'btn-danger'} mt-2" onclick="openManualTrade('${plan.direction}')"><i class="bi bi-plus-circle me-1"></i>${plan.position_mode==='ADD_POSITION'?'Tambah':'Buka'} ${plan.direction}</button>`:'';el('tradePlan').className='d-block';el('tradePlan').innerHTML=`<div class="detail-grid">${items.map(([k,v])=>`<div class="detail-item"><small>${esc(k)}</small><strong>${esc(v??'--')}</strong></div>`).join('')}</div>${existing?`<div class="section-label mt-3 mb-2">Posisi yang sedang aktif</div><div class="d-grid gap-2">${existing}</div>`:''}${addButton}`;
     }
 
-    function renderAccount(payload){const a=payload.info||{},items=[['Login',a.login],['Server',a.server],['Leverage',a.leverage?`1:${a.leverage}`:'--'],['Currency',a.currency],['Free Margin',numeric(a.margin_free,2)],['Margin Level',a.margin_level?`${numeric(a.margin_level,2)}%`:'--']];el('accountDetails').innerHTML=items.map(([k,v])=>`<div class="detail-item"><small>${esc(k)}</small><strong>${esc(v??'--')}</strong></div>`).join('');}
+    function renderAccount(payload){if(!payload.connected){el('accountActions').innerHTML='<button class="btn btn-sm btn-success" data-bs-toggle="modal" data-bs-target="#accountLoginModal"><i class="bi bi-box-arrow-in-right me-1"></i>Login</button>';el('accountDetails').className='empty-state';el('accountDetails').innerHTML='<div><div class="fs-3 mb-2"><i class="bi bi-person-x"></i></div><div>Akun MT5 belum terhubung.</div><small>Login untuk melihat saldo dan memulai trading.</small></div>';return;}const a=payload.info||{},items=[['Login',a.login],['Server',a.server],['Leverage',a.leverage?`1:${a.leverage}`:'--'],['Currency',a.currency],['Free Margin',numeric(a.margin_free,2)],['Margin Level',a.margin_level?`${numeric(a.margin_level,2)}%`:'--']];el('accountActions').innerHTML='<button class="btn btn-sm btn-outline-danger" onclick="logoutAccount()"><i class="bi bi-box-arrow-right me-1"></i>Logout</button>';el('accountDetails').className='detail-grid';el('accountDetails').innerHTML=items.map(([k,v])=>`<div class="detail-item"><small>${esc(k)}</small><strong>${esc(v??'--')}</strong></div>`).join('');}
 
     function renderPositions(payload){
       const positions=payload.positions||[]; el('positionBadge').textContent=`${positions.length} posisi`;
@@ -188,16 +249,76 @@
       el('positionsBody').innerHTML=positions.map(p=>`<tr><td>${esc(p.ticket)}</td><td><span class="badge ${p.type_str==='BUY'?'text-bg-success':'text-bg-danger'}">${esc(p.type_str)}</span></td><td class="fw-semibold">${esc(p.symbol)}</td><td>${numeric(p.volume,2)}</td><td>${numeric(p.price_open,2)}</td><td>${numeric(p.sl,2)}</td><td>${numeric(p.tp,2)}</td><td class="text-end fw-bold ${p.profit>=0?'text-success':'text-danger'}">${numeric(p.profit,2)}</td></tr>`).join('');
     }
 
+    function renderHistory(payload){
+      const summary=payload.summary||{},deals=[...(payload.deals||[])].sort((a,b)=>new Date(b.time)-new Date(a.time)||(Number(b.ticket||0)-Number(a.ticket||0)));
+      if(historyDataTable){historyDataTable.destroy();historyDataTable=null;}
+      el('historySummary').innerHTML=[
+        `<span class="history-chip chip-primary"><i class="bi bi-x-circle"></i><span><small>Closed</small><strong>${numeric(summary.count,0)} Trade</strong></span></span>`,
+        `<span class="history-chip chip-success"><i class="bi bi-trophy-fill"></i><span><small>Win</small><strong>${numeric(summary.wins,0)} Trade</strong></span></span>`,
+        `<span class="history-chip chip-danger"><i class="bi bi-x-octagon-fill"></i><span><small>Loss</small><strong>${numeric(summary.losses,0)} Trade</strong></span></span>`,
+        `<span class="history-chip chip-success"><i class="bi bi-graph-up-arrow"></i><span><small>Total Profit</small><strong>${numeric(summary.gross_profit,2)}</strong></span></span>`,
+        `<span class="history-chip chip-danger"><i class="bi bi-graph-down-arrow"></i><span><small>Total Loss</small><strong>${numeric(Math.abs(Number(summary.gross_loss||0)),2)}</strong></span></span>`,
+        `<span class="history-chip ${Number(summary.net_profit||0)>=0?'chip-net-positive':'chip-net-negative'}"><i class="bi bi-wallet2"></i><span><small>Net P/L</small><strong>${numeric(summary.net_profit,2)}</strong></span></span>`
+      ].join('');
+      if(!deals.length){el('historyBody').innerHTML='<tr><td colspan="8"><div class="empty-state">Belum ada trade tertutup dalam riwayat akun.</div></td></tr>';return;}
+      el('historyBody').innerHTML=deals.map(d=>{const resultIcon=d.result==='WIN'?'bi-trophy-fill':d.result==='LOSS'?'bi-x-circle-fill':'bi-dash-circle-fill';return `<tr><td data-order="${esc(d.time)}" class="text-nowrap"><i class="bi bi-clock-history me-1 text-secondary"></i>${esc(new Date(d.time).toLocaleString('id-ID',{timeZone:'UTC'}))}</td><td>${esc(d.ticket)}</td><td class="fw-semibold">${esc(d.symbol)}</td><td><span class="badge ${d.type_str==='BUY'?'text-bg-success':'text-bg-danger'}"><i class="bi bi-box-arrow-in-left me-1"></i>CLOSE ${esc(d.type_str)}</span></td><td>${numeric(d.volume,2)}</td><td>${numeric(d.price,2)}</td><td><span class="badge ${d.result==='WIN'?'text-bg-success':d.result==='LOSS'?'text-bg-danger':'text-bg-secondary'}"><i class="bi ${resultIcon} me-1"></i>${esc(d.result)}</span></td><td data-order="${Number(d.net_profit||0)}" class="text-end fw-bold ${d.net_profit>=0?'text-success':'text-danger'}">${numeric(d.net_profit,2)}</td></tr>`;}).join('');
+      if(window.DataTable)historyDataTable=new DataTable('#historyTable',{order:[[0,'desc']],pageLength:10,lengthMenu:[5,10,25,50,100],responsive:false,language:{search:'Cari:',lengthMenu:'Tampilkan _MENU_ trade',info:'Menampilkan _START_–_END_ dari _TOTAL_ trade',infoEmpty:'Tidak ada trade',zeroRecords:'Trade tidak ditemukan',paginate:{first:'Pertama',last:'Terakhir',next:'Berikutnya',previous:'Sebelumnya'}}});
+    }
+
+    function renderCapitalCurve(payload,visibleCount=null){
+      window._lastCapitalCurve=payload;
+      const allPoints=payload.points||[],points=visibleCount==null?allPoints:allPoints.slice(0,Math.max(1,visibleCount)),canvas=el('capitalChart'),ratio=window.devicePixelRatio||1,width=canvas.clientWidth||800,height=260;
+      canvas.width=Math.round(width*ratio);canvas.height=Math.round(height*ratio);const ctx=canvas.getContext('2d');ctx.scale(ratio,ratio);ctx.clearRect(0,0,width,height);
+      const animated=visibleCount!=null&&points.length<allPoints.length,current=animated?Number(points.at(-1)?.balance||payload.initial_balance):payload.current_balance;
+      el('capitalSummary').textContent=`Modal awal ${numeric(payload.initial_balance,2)} ${payload.currency||''} -> ${animated?'Berjalan':'Balance'} ${numeric(current,2)}${animated?` (${points.length}/${allPoints.length})`:` | Equity ${numeric(payload.current_equity,2)}`}`;
+      if(points.length<2){ctx.fillStyle='#64748b';ctx.font='14px system-ui';ctx.fillText('Belum ada data kurva modal.',20,40);return;}
+      const values=points.map(p=>Number(p.balance)),min=Math.min(...values),max=Math.max(...values),range=Math.max(max-min,1),pad=28;
+      ctx.strokeStyle='rgba(148,163,184,.18)';ctx.lineWidth=1;for(let i=0;i<4;i++){const y=pad+(height-pad*2)*i/3;ctx.beginPath();ctx.moveTo(pad,y);ctx.lineTo(width-pad,y);ctx.stroke();}
+      const coords=values.map((v,i)=>({x:pad+(width-pad*2)*i/(values.length-1),y:height-pad-(v-min)/range*(height-pad*2)}));
+      const gradient=ctx.createLinearGradient(0,pad,0,height-pad);gradient.addColorStop(0,'rgba(59,130,246,.35)');gradient.addColorStop(1,'rgba(59,130,246,0)');ctx.beginPath();ctx.moveTo(coords[0].x,height-pad);coords.forEach(p=>ctx.lineTo(p.x,p.y));ctx.lineTo(coords.at(-1).x,height-pad);ctx.closePath();ctx.fillStyle=gradient;ctx.fill();
+      ctx.beginPath();coords.forEach((p,i)=>i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y));ctx.strokeStyle=values.at(-1)>=values[0]?'#22c55e':'#ef4444';ctx.lineWidth=2.5;ctx.stroke();
+      ctx.fillStyle='#94a3b8';ctx.font='11px system-ui';ctx.fillText(numeric(max,2),2,pad);ctx.fillText(numeric(min,2),2,height-pad);
+      const latest=coords.at(-1),latestValue=values.at(-1),label=`${numeric(latestValue,2)} ${payload.currency||''}`.trim(),positive=latestValue>=values[0];ctx.beginPath();ctx.arc(latest.x,latest.y,4.5,0,Math.PI*2);ctx.fillStyle=positive?'#22c55e':'#ef4444';ctx.fill();ctx.font='bold 12px system-ui';const labelWidth=ctx.measureText(label).width+16,labelHeight=26,labelX=Math.max(pad,Math.min(width-pad-labelWidth,latest.x-labelWidth/2)),labelY=Math.max(2,latest.y-36);ctx.fillStyle=positive?'rgba(21,128,61,.96)':'rgba(185,28,28,.96)';if(ctx.roundRect){ctx.beginPath();ctx.roundRect(labelX,labelY,labelWidth,labelHeight,7);ctx.fill();}else ctx.fillRect(labelX,labelY,labelWidth,labelHeight);ctx.fillStyle='#fff';ctx.fillText(label,labelX+8,labelY+17);
+      canvas._capitalChart={points,coords,initial:Number(payload.initial_balance||0),currency:payload.currency||'',width,height};
+    }
+
+    function playCapitalCurve(){
+      const payload=window._lastCapitalCurve||{},points=payload.points||[],button=el('capitalPlayBtn');if(points.length<2){showAction('Data pertumbuhan akun belum cukup untuk dianimasikan.','warning');return;}
+      if(capitalAnimationFrame)cancelAnimationFrame(capitalAnimationFrame);el('capitalTooltip').classList.add('d-none');button.disabled=true;button.innerHTML='<span class="spinner-border spinner-border-sm me-1"></span>Berjalan';
+      let count=2,lastStep=0;renderCapitalCurve(payload,count);
+      const stepDelay=180;
+      const animate=now=>{if(!lastStep)lastStep=now;if(now-lastStep>=stepDelay){count=Math.min(points.length,count+1);lastStep=now;renderCapitalCurve(payload,count);}if(count<points.length){capitalAnimationFrame=requestAnimationFrame(animate);return;}capitalAnimationFrame=null;renderCapitalCurve(payload);button.disabled=false;button.innerHTML='<i class="bi bi-arrow-repeat me-1"></i>Replay';};
+      capitalAnimationFrame=requestAnimationFrame(animate);
+    }
+
+    el('capitalChart').addEventListener('mousemove',event=>{
+      const canvas=el('capitalChart'),chart=canvas._capitalChart,tip=el('capitalTooltip');if(!chart?.coords?.length)return;
+      const rect=canvas.getBoundingClientRect(),x=event.clientX-rect.left,index=chart.coords.reduce((best,p,i)=>Math.abs(p.x-x)<Math.abs(chart.coords[best].x-x)?i:best,0),point=chart.points[index],coord=chart.coords[index],balance=Number(point.balance),growth=balance-chart.initial,growthPct=chart.initial?growth/chart.initial*100:0;
+      tip.innerHTML=`<div class="fw-semibold mb-1">${esc(new Date(point.time).toLocaleString('id-ID'))}</div><div>Balance: <strong>${numeric(balance,2)} ${esc(chart.currency)}</strong></div><div class="${growth>=0?'text-success':'text-danger'}">Pertumbuhan: <strong>${growth>=0?'+':''}${numeric(growth,2)} (${growth>=0?'+':''}${numeric(growthPct,2)}%)</strong></div>`;
+      tip.classList.remove('d-none');const maxLeft=Math.max(0,rect.width-tip.offsetWidth-16);tip.style.left=`${Math.min(coord.x,maxLeft)}px`;tip.style.top=`${Math.max(28,Math.min(coord.y,chart.height-28))}px`;
+    });
+    el('capitalChart').addEventListener('mouseleave',()=>el('capitalTooltip').classList.add('d-none'));
+
     async function refreshDashboard(manual=false){
       el('refreshSpinner').classList.remove('d-none');el('refreshBtn').disabled=true;el('errorAlert').classList.add('d-none');
-      try{const [status,account,signal,positions]=await Promise.all([api('/status'),api('/account'),api('/signal'),api('/positions')]);renderStatus(status);renderAccount(account);renderSignal(signal);renderPositions(positions);if(manual)showAction('Dashboard berhasil diperbarui.','success');}
+      try{const [status,account,signal,positions,history,capital]=await Promise.all([api('/status'),api('/account'),api('/signal'),api('/positions?all_account=true'),api('/trade-history?days=3650&limit=100&all_account=true'),api('/capital-curve?days=3650')]);renderStatus(status);renderAccount(account);renderSignal(signal);renderPositions(positions);renderHistory(history);renderCapitalCurve(capital);if(manual)showAction('Dashboard berhasil diperbarui.','success');}
       catch(error){el('errorAlert').textContent=`Gagal memuat dashboard: ${error.message}`;el('errorAlert').classList.remove('d-none');}
       finally{el('refreshSpinner').classList.add('d-none');el('refreshBtn').disabled=false;}
     }
-    function showAction(message,type='info'){el('actionAlert').textContent=message;el('actionAlert').className=`alert alert-${type}`;}
-    async function runAction(path,method){document.querySelectorAll('.action-btn').forEach(b=>b.disabled=true);try{const result=await api(path,{method});showAction(result.message,result.ok?'success':'warning');await refreshDashboard();}catch(error){showAction(error.message,'danger');}finally{document.querySelectorAll('.action-btn').forEach(b=>b.disabled=false);}}
+    function showAction(message,type='info'){const icon=type==='danger'?'error':type==='warning'?'warning':type==='success'?'success':'info';if(window.Swal){Swal.fire({toast:true,position:'top-end',icon,title:String(message),showConfirmButton:false,timer:5000,timerProgressBar:true,showCloseButton:true,didOpen:toast=>{toast.addEventListener('mouseenter',Swal.stopTimer);toast.addEventListener('mouseleave',Swal.resumeTimer);}});}else{el('actionAlert').textContent=message;el('actionAlert').className=`alert alert-${type}`;}}
+    async function runAction(path,method){document.querySelectorAll('.action-btn').forEach(b=>b.disabled=true);try{const result=await api(path,{method});const failures=(result.detail||[]).filter?.(item=>item.ok===false)||[],detail=failures.length?` | ${failures.map(item=>`#${item.ticket||'-'}: ${item.message}`).join('; ')}`:'';showAction(result.message+detail,result.ok?'success':'warning');await refreshDashboard();}catch(error){showAction(error.message,'danger');}finally{document.querySelectorAll('.action-btn').forEach(b=>b.disabled=false);}}
+    async function toggleConfidenceAuto(){await runAction(confidenceAuto?'/trade/confidence-auto/stop':'/trade/confidence-auto/start','POST');}
+    async function changeAutoMarkets(){if(autoMarketsChanging)return;const btc=el('autoMarketBTC'),xau=el('autoMarketXAU'),symbols=[];if(btc.checked)symbols.push('BTCUSD');if(xau.checked)symbols.push('XAUUSD');if(!symbols.length){(activeSymbol==='XAUUSD'?xau:btc).checked=true;showAction('Minimal satu market Auto Confidence harus aktif.','warning');return;}autoMarketsChanging=true;btc.disabled=xau.disabled=true;try{const result=await api('/trade/confidence-auto/markets',{method:'POST',headers:{Accept:'application/json','Content-Type':'application/json'},body:JSON.stringify({symbols})});if(!result.ok)throw new Error(result.message);showAction(result.message,'success');await refreshStatusRealtime();}catch(error){showAction(`Gagal mengubah market auto: ${error.message}`,'danger');await refreshStatusRealtime();}finally{autoMarketsChanging=false;btc.disabled=xau.disabled=false;}}
     async function closeAll(){bootstrap.Modal.getOrCreateInstance(el('closeModal')).hide();await runAction('/trade/close-all','POST');}
-    refreshDashboard(); setInterval(()=>refreshDashboard(),10000);
+    function openManualTrade(direction){manualDirection=direction;const buy=direction==='BUY',plan=latestSignalPayload?.trade_plan,confidence=Number(latestSignalPayload?.signal?.confidence||0)*100;el('manualTradeTitle').innerHTML=`<i class="bi ${buy?'bi-arrow-up-circle text-success':'bi-arrow-down-circle text-danger'} me-2"></i>Konfirmasi ${direction} ${esc(activeSymbol)}`;el('manualTradeConfirm').className=`btn ${buy?'btn-success':'btn-danger'} action-btn`;el('manualTradeConfirm').innerHTML=`<i class="bi bi-check-circle me-1"></i>Konfirmasi ${direction} ${esc(activeSymbol)}`;el('manualTradeInfo').textContent=`Market ${activeSymbol}. Confidence saat ini ${numeric(confidence,1)}%. ${plan&&plan.direction===direction?`Referensi entry ${numeric(plan.entry,2)}, SL ${numeric(plan.stop_loss,2)}, TP ${numeric(plan.take_profit,2)}.`:'Plan final dihitung ulang oleh server saat konfirmasi.'}`;bootstrap.Modal.getOrCreateInstance(el('manualTradeModal')).show();}
+    async function executeManualTrade(){const lot=Number(el('manualLot').value);if(!Number.isFinite(lot)||lot<=0){showAction('Lot tidak valid.','danger');return;}bootstrap.Modal.getOrCreateInstance(el('manualTradeModal')).hide();document.querySelectorAll('.action-btn').forEach(b=>b.disabled=true);try{const result=await api('/trade/manual',{method:'POST',headers:{Accept:'application/json','Content-Type':'application/json'},body:JSON.stringify({direction:manualDirection,lot})});const plan=result.detail?.plan||{};showAction(`${manualDirection} ${result.ok?'berhasil':'gagal'}: ${result.message}${plan.entry?` | Entry ${numeric(plan.entry,2)} SL ${numeric(plan.stop_loss,2)} TP ${numeric(plan.take_profit,2)}`:''}`,result.ok?'success':'warning');await refreshDashboard();}catch(error){showAction(error.message,'danger');}finally{document.querySelectorAll('.action-btn').forEach(b=>b.disabled=false);}}
+    async function changeMarket(symbol){if(marketChanging||symbol===activeSymbol)return;marketChanging=true;el('marketSelect').disabled=true;try{const result=await api('/symbol',{method:'POST',headers:{Accept:'application/json','Content-Type':'application/json'},body:JSON.stringify({symbol})});if(!result.ok)throw new Error(result.message);activeSymbol=symbol;latestSignalPayload=null;showAction(result.message,'success');await refreshDashboard();}catch(error){showAction(`Gagal mengganti market: ${error.message}`,'danger');el('marketSelect').value=activeSymbol;}finally{marketChanging=false;el('marketSelect').disabled=false;}}
+    function syncManualLot(symbol){const minimum=symbol==='BTCUSD'?0.05:0.01,input=el('manualLot');input.min=String(minimum);if(Number(input.value)<minimum||input.dataset.symbol!==symbol)input.value=minimum.toFixed(2);input.dataset.symbol=symbol;}
+    async function executeBulkLevel(level){const input=el(level==='SL'?'bulkSlPrice':'bulkTpPrice'),price=Number(input.value);if(!Number.isFinite(price)||price<=0){showAction(`Harga ${level} tidak valid.`,'danger');return;}const confirmation=window.Swal?await Swal.fire({icon:'warning',title:`Set semua ${level}?`,text:`Terapkan ${level} ${numeric(price,3)} ke seluruh posisi ${activeSymbol}`,showCancelButton:true,confirmButtonText:`Ya, set ${level}`,cancelButtonText:'Batal',confirmButtonColor:level==='SL'?'#dc3545':'#198754'}):{isConfirmed:window.confirm(`Set ${level} ${numeric(price,3)} ke SEMUA posisi ${activeSymbol}?`)};if(!confirmation.isConfirmed)return;document.querySelectorAll('.action-btn').forEach(b=>b.disabled=true);try{const result=await api('/trade/set-level',{method:'POST',headers:{Accept:'application/json','Content-Type':'application/json'},body:JSON.stringify({level,price})}),failures=(result.detail||[]).filter(item=>item.ok===false),detail=failures.length?` | ${failures.map(item=>`#${item.ticket||'-'}: ${item.message}`).join('; ')}`:'';showAction(result.message+detail,result.ok?'success':'warning');await refreshDashboard();}catch(error){showAction(error.message,'danger');}finally{document.querySelectorAll('.action-btn').forEach(b=>b.disabled=false);}}
+    async function showStrategies(){bootstrap.Modal.getOrCreateInstance(el('strategiesModal')).show();el('strategiesContent').innerHTML='<div class="skeleton">Memuat strategi...</div>';try{const data=await api('/strategies'),live=(data.live||[]).map(s=>`<div class="detail-item"><strong><i class="bi bi-check-circle-fill text-success me-2"></i>${esc(s.name)}</strong><div class="small text-secondary mt-1">${esc(s.detail)}</div></div>`).join(''),backtest=(data.backtest_only||[]).map(s=>`<div class="detail-item"><strong><i class="bi bi-clipboard-data text-warning me-2"></i>${esc(s.name)}</strong><div class="small text-secondary mt-1">Backtest only · ${esc(s.module)}</div></div>`).join('');el('strategiesContent').innerHTML=`<div class="alert alert-info py-2"><strong>${esc(data.active_symbol)} · ${esc(data.active_timeframe)}</strong> · Auto Confidence ${data.confidence_auto?'AKTIF':'NONAKTIF'}</div><div class="section-label mb-2">Aktif untuk Live Trading</div><div class="d-grid gap-2 mb-4">${live}</div><div class="section-label mb-2">Tersedia untuk Backtest</div><div class="d-grid gap-2">${backtest}</div>`;}catch(error){el('strategiesContent').innerHTML=`<div class="alert alert-danger">${esc(error.message)}</div>`;}}
+    async function loginAccount(){const login=Number(el('mt5Login').value),password=el('mt5Password').value,server=el('mt5Server').value.trim();if(!Number.isInteger(login)||login<=0||!password||!server){showAction('Nomor akun, password, dan server wajib diisi.','warning');return;}el('accountLoginBtn').disabled=true;try{const result=await api('/account/login',{method:'POST',headers:{Accept:'application/json','Content-Type':'application/json'},body:JSON.stringify({login,password,server})});if(!result.ok)throw new Error(result.message);el('mt5Password').value='';bootstrap.Modal.getOrCreateInstance(el('accountLoginModal')).hide();showAction(result.message,'success');await refreshDashboard();}catch(error){showAction(`Login gagal: ${error.message}`,'danger');}finally{el('accountLoginBtn').disabled=false;}}
+    async function logoutAccount(){const confirmation=window.Swal?await Swal.fire({icon:'warning',title:'Logout akun MT5?',text:'Auto trade akan dihentikan dan dashboard diputus dari MT5.',showCancelButton:true,confirmButtonText:'Ya, Logout',cancelButtonText:'Batal',confirmButtonColor:'#dc3545'}):{isConfirmed:window.confirm('Logout akun MT5?')};if(!confirmation.isConfirmed)return;try{const result=await api('/account/logout',{method:'POST'});showAction(result.message,result.ok?'success':'warning');await refreshDashboard();}catch(error){showAction(error.message,'danger');}}
+    applyTheme(localStorage.getItem('dashboard-theme')||'dark');updateRealtimeClock();refreshDashboard();setInterval(updateRealtimeClock,1000);setInterval(refreshStatusRealtime,2000);setInterval(()=>refreshDashboard(),10000);
   </script>
 </body>
 </html>

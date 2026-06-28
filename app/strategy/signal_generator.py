@@ -97,6 +97,9 @@ def generate_signal(
     sig.ml = ml
     prob_buy = ml.get("buy", 0.5)
     prob_sell = ml.get("sell", 0.5)
+    # Keep the model's dominant probability visible even when a safety gate
+    # (for example, excessive spread) returns HOLD before rule evaluation.
+    sig.confidence = max(prob_buy, prob_sell)
 
     if spread_points is None:
         spread_ok, spread_val = _spread_ok()
@@ -150,7 +153,6 @@ def generate_signal(
         sig.reasons = [f"SELL ok: {', '.join(sell_passed)}", "spread ok"]
     else:
         sig.action = "HOLD"
-        sig.confidence = max(prob_buy, prob_sell)
         sig.reasons = [
             f"BUY {len(buy_passed)}/{len(buy_checks)} [{', '.join(buy_passed) or '-'}]",
             f"SELL {len(sell_passed)}/{len(sell_checks)} [{', '.join(sell_passed) or '-'}]",

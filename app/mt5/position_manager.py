@@ -9,14 +9,14 @@ from app.mt5 import order_executor
 from app.utils.logger import logger
 
 
-def get_open_positions(symbol: str | None = None) -> list[dict[str, Any]]:
+def get_open_positions(symbol: str | None = None, bot_only: bool = True) -> list[dict[str, Any]]:
     """Return bot-owned open positions as dicts."""
     if not MT5_AVAILABLE or not connection.ensure_connected():
         return []
     positions = mt5.positions_get(symbol=symbol or settings.symbol) or []
     out = []
     for p in positions:
-        if p.magic != settings.magic_number:
+        if bot_only and p.magic != settings.magic_number:
             continue
         d = p._asdict()
         d["type_str"] = "BUY" if p.type == mt5.POSITION_TYPE_BUY else "SELL"

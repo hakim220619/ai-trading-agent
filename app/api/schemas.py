@@ -1,6 +1,8 @@
 """Pydantic request/response schemas for the API."""
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -19,6 +21,9 @@ class StatusResponse(BaseModel):
     account_equity: float | None = None
     account_currency: str | None = None
     total_profit: float = 0.0
+    confidence_auto: bool = False
+    max_open_positions: int = 3
+    auto_symbols: list[str] = Field(default_factory=list)
 
 
 class AccountResponse(BaseModel):
@@ -30,6 +35,12 @@ class PositionsResponse(BaseModel):
     count: int
     total_profit: float
     positions: list[dict]
+
+
+class TradeHistoryResponse(BaseModel):
+    days: int
+    summary: dict
+    deals: list[dict]
 
 
 class SignalResponse(BaseModel):
@@ -67,3 +78,27 @@ class ActionResponse(BaseModel):
     ok: bool
     message: str
     detail: dict | list | None = None
+
+
+class ManualTradeRequest(BaseModel):
+    direction: Literal["BUY", "SELL"]
+    lot: float = Field(default=0.01, gt=0.0, le=100.0)
+
+
+class SymbolRequest(BaseModel):
+    symbol: Literal["BTCUSD", "XAUUSD"]
+
+
+class BulkLevelRequest(BaseModel):
+    level: Literal["SL", "TP"]
+    price: float = Field(gt=0.0)
+
+
+class MT5LoginRequest(BaseModel):
+    login: int = Field(gt=0)
+    password: str = Field(min_length=1)
+    server: str = Field(min_length=1)
+
+
+class AutoMarketsRequest(BaseModel):
+    symbols: list[Literal["BTCUSD", "XAUUSD"]] = Field(min_length=1, max_length=2)

@@ -53,6 +53,7 @@ class MT5Connection:
 
     def __init__(self) -> None:
         self._connected: bool = False
+        self._user_logged_out: bool = False
 
     @property
     def available(self) -> bool:
@@ -70,6 +71,9 @@ class MT5Connection:
         """
         if not MT5_AVAILABLE:
             logger.error("Cannot connect: MetaTrader5 package not installed on this OS.")
+            return False
+        if self._user_logged_out:
+            logger.info("MT5 auto-connect paused after dashboard logout.")
             return False
 
         init_kwargs: dict[str, Any] = {}
@@ -109,6 +113,8 @@ class MT5Connection:
         """Reconnect automatically if the terminal dropped the session."""
         if not MT5_AVAILABLE:
             return False
+        if self._user_logged_out:
+            return False
         if self._connected and mt5.terminal_info() is not None:
             return True
         logger.warning("MT5 session lost - attempting reconnect...")
@@ -121,6 +127,34 @@ class MT5Connection:
             mt5.shutdown()
         self._connected = False
         logger.info("MT5 disconnected.")
+
+    def login(self, login: int, password: str, server: str) -> tuple[bool, str]:
+        """Explicitly login from the dashboard without persisting credentials."""
+        if not MT5_AVAILABLE:
+            return False, "MetaTrader5 package unavailable"
+        if self._connected:
+            mt5.shutdown()
+            self._connected = False
+        init_kwargs: dict[str, Any] = {}
+        if settings.mt5_path:
+            init_kwargs["path"] = settings.mt5_path
+        if not mt5.initialize(**init_kwargs):
+            return False, f"mt5.initialize failed: {mt5.last_error()}"
+        if not mt5.login(login=int(login), password=password, server=server):
+            error = mt5.last_error()
+            mt5.shutdown()
+            return False, f"mt5.login failed: {error}"
+        self._user_logged_out = False
+        self._connected = True
+        return True, "login MT5 berhasil"
+
+    def logout(self) -> None:
+        """Disconnect and suppress automatic reconnection until explicit login."""
+        if MT5_AVAILABLE:
+            mt5.shutdown()
+        self._connected = False
+        self._user_logged_out = True
+        logger.info("MT5 logged out from dashboard.")
 
     # --- Info helpers -------------------------------------------------------
     def account_info(self) -> dict[str, Any] | None:

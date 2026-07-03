@@ -6,6 +6,7 @@ from typing import Any
 from app.config import settings
 from app.mt5.connection import MT5_AVAILABLE, connection, mt5
 from app.mt5 import order_executor
+from app.mt5.confidence_metadata import parse_confidence_pct, parse_cycle_key
 from app.utils.logger import logger
 
 
@@ -20,6 +21,8 @@ def get_open_positions(symbol: str | None = None, bot_only: bool = True) -> list
             continue
         d = p._asdict()
         d["type_str"] = "BUY" if p.type == mt5.POSITION_TYPE_BUY else "SELL"
+        d["confidence_pct"] = parse_confidence_pct(getattr(p, "comment", ""))
+        d["cycle_key"] = parse_cycle_key(getattr(p, "comment", ""))
         out.append(d)
     return out
 

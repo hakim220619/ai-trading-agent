@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
-from app.strategy.risk_manager import build_trade_plan
+from app.strategy.risk_manager import apply_money_limits, build_trade_plan
 from app.backtest.backtester import Trade, _trade_pnl
 
 
@@ -41,6 +41,34 @@ class RiskManagerTests(unittest.TestCase):
             (plan.stop_loss - plan.entry) * 2.0,
             places=3,
         )
+
+    @patch("app.strategy.risk_manager._symbol_meta", return_value=_META)
+    def test_fixed_dashboard_distances_override_atr_for_buy(self, _meta) -> None:
+        plan = build_trade_plan(
+            "BUY", 100.0, 9.0, 1000.0,
+            fixed_stop_distance=2.5,
+            fixed_take_profit_distance=4.0,
+        )
+        self.assertEqual(plan.stop_loss, 97.5)
+        self.assertEqual(plan.take_profit, 104.0)
+
+    @patch("app.strategy.risk_manager._symbol_meta", return_value=_META)
+    def test_fixed_dashboard_distances_override_atr_for_sell(self, _meta) -> None:
+        plan = build_trade_plan(
+            "SELL", 100.0, 9.0, 1000.0,
+            fixed_stop_distance=2.5,
+            fixed_take_profit_distance=4.0,
+        )
+        self.assertEqual(plan.stop_loss, 102.5)
+        self.assertEqual(plan.take_profit, 96.0)
+
+    @patch("app.strategy.risk_manager._symbol_meta", return_value={**_META, "stops_level": 0})
+    def test_money_limits_are_converted_to_buy_prices(self, _meta) -> None:
+        plan = build_trade_plan("BUY", 100.0, 1.0, 1000.0)
+        plan.lot = 0.1
+        apply_money_limits(plan, "XAUUSD", 1.0, 2.0)
+        self.assertEqual(plan.stop_loss, 99.99)
+        self.assertEqual(plan.take_profit, 100.02)
 
     @patch(
         "app.backtest.backtester.connection.symbol_info",

@@ -22,8 +22,19 @@ class StatusResponse(BaseModel):
     account_currency: str | None = None
     total_profit: float = 0.0
     confidence_auto: bool = False
+    active_strategy: Literal["confidence_m5", "recovery_m1"] = "confidence_m5"
+    strategy_status: dict = Field(default_factory=dict)
     max_open_positions: int = 3
     auto_symbols: list[str] = Field(default_factory=list)
+    confidence_threshold: float = 0.65
+    trailing_stop: bool = True
+    trailing_profit_step_money: float = 1.0
+    daily_profit_limit_enabled: bool = False
+    daily_profit_limit_money: float = 0.0
+    daily_lot_limit_enabled: bool = False
+    daily_lot_limit: float = 0.0
+    daily_profit_today: float = 0.0
+    daily_lot_today: float = 0.0
 
 
 class AccountResponse(BaseModel):
@@ -86,7 +97,7 @@ class ManualTradeRequest(BaseModel):
 
 
 class SymbolRequest(BaseModel):
-    symbol: Literal["BTCUSD", "XAUUSD"]
+    symbol: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9._\-#]+$")
 
 
 class BulkLevelRequest(BaseModel):
@@ -101,4 +112,37 @@ class MT5LoginRequest(BaseModel):
 
 
 class AutoMarketsRequest(BaseModel):
-    symbols: list[Literal["BTCUSD", "XAUUSD"]] = Field(min_length=1, max_length=2)
+    symbols: list[str] = Field(min_length=1, max_length=20)
+
+
+class SymbolRiskConfigRequest(BaseModel):
+    symbol: Literal["BTCUSD", "XAUUSD"]
+    stop_loss_money: float = Field(ge=0.0, le=1_000_000.0)
+    take_profit_money: float = Field(ge=0.0, le=1_000_000.0)
+
+
+class TradingSetupRequest(BaseModel):
+    active_strategy: Literal["confidence_m5", "recovery_m1"] | None = None
+    confidence_threshold: float = Field(ge=0.5, le=0.99)
+    max_open_positions: int = Field(ge=1, le=20)
+    btcusd_min_lot: float = Field(ge=0.01, le=100.0)
+    xauusd_min_lot: float = Field(ge=0.01, le=100.0)
+    trailing_stop: bool = True
+    trailing_profit_step_money: float = Field(gt=0.0)
+    daily_profit_limit_enabled: bool = False
+    daily_profit_limit_money: float = Field(default=0.0, ge=0.0, le=1_000_000.0)
+    daily_lot_limit_enabled: bool = False
+    daily_lot_limit: float = Field(default=0.0, ge=0.0, le=1_000.0)
+
+
+class ScalpingSetupRequest(BaseModel):
+    confidence_threshold: float = Field(ge=0.50, le=0.99)
+    base_lot: float = Field(ge=0.01, le=100.0)
+    second_lot: float = Field(ge=0.01, le=100.0)
+    lot_multiplier: float = Field(ge=1.0, le=10.0)
+    max_lot: float = Field(ge=0.01, le=100.0)
+    initial_loss_money: float = Field(gt=0.0, le=1_000_000.0)
+    loss_increment_money: float = Field(gt=0.0, le=1_000_000.0)
+    basket_profit_target: float = Field(gt=0.0, le=1_000_000.0)
+    daily_profit_target: float = Field(default=0.0, ge=0.0, le=1_000_000.0)
+    daily_profit_target_enabled: bool = False

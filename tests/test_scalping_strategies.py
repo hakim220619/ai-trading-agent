@@ -8,6 +8,7 @@ import pandas as pd
 from app.strategy.scalping_common import market_family
 from app.strategy.scalping_m1_strategy import build_m1_plan, generate_m1_signal
 from app.strategy.scalping_m5_strategy import generate_m5_signal
+from app.strategy.rsi_strategy import generate_rsi_signal
 
 
 class ScalpingStrategyTests(unittest.TestCase):
@@ -61,6 +62,12 @@ class ScalpingStrategyTests(unittest.TestCase):
         signal = generate_m5_signal(row, "EURUSD", 101, 100)
         self.assertEqual(signal.action, "HOLD")
         self.assertIn("spread too high", signal.reasons[0])
+
+    def test_rsi_reversal_buy_and_sell(self) -> None:
+        buy = pd.Series({"close": 100.0, "atr": 1.0, "previous_rsi": 28.0, "rsi": 31.0})
+        sell = pd.Series({"close": 100.0, "atr": 1.0, "previous_rsi": 72.0, "rsi": 69.0})
+        self.assertEqual(generate_rsi_signal(buy, "XAUUSD", 20, 100).action, "BUY")
+        self.assertEqual(generate_rsi_signal(sell, "XAUUSD", 20, 100).action, "SELL")
 
     @patch("app.strategy.scalping_common.calculate_lot", return_value=0.01)
     def test_m1_plan_uses_market_specific_atr_stop(self, _lot) -> None:

@@ -1,0 +1,35 @@
+{
+  "BTCUSD": {
+    "stop_loss_money": 3.0,
+    "take_profit_money": 6.0
+  },
+  "XAUUSD": {
+    "stop_loss_money": 3.0,
+    "take_profit_money": 6.0
+  },
+  "trading_setup": {
+    "active_strategy": "recovery_m1",
+    "confidence_threshold": 0.8,
+    "max_open_positions": 3,
+    "btcusd_min_lot": 0.05,
+    "xauusd_min_lot": 0.01,
+    "trailing_stop": false,
+    "trailing_profit_step_money": 2.0,
+    "daily_profit_limit_enabled": false,
+    "daily_profit_limit_money": 70.0,
+    "daily_lot_limit_enabled": false,
+    "daily_lot_limit": 40.0
+  },
+  "scalping_setup": {
+    "confidence_threshold": 0.5,
+    "base_lot": 0.01,
+    "second_lot": 0.03,
+    "lot_multiplier": 2.0,
+    "max_lot": 5.0,
+    "initial_loss_money": 3.0,
+    "loss_increment_money": 2.0,
+    "basket_profit_target": 0.9,
+    "daily_profit_target": 50.0,
+    "daily_profit_target_enabled": false
+  }
+}

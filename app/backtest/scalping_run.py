@@ -13,7 +13,7 @@ from app.mt5.market_data import load_candles_csv
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Backtest M1 or M5 scalping strategy")
-    parser.add_argument("--strategy", choices=["m1", "ma-m1", "snd-m1", "m5"], required=True)
+    parser.add_argument("--strategy", choices=["m1", "ma-m1", "snd-m1", "rsi", "m5"], required=True)
     parser.add_argument("--csv", required=True)
     parser.add_argument("--symbol", required=True)
     parser.add_argument("--start-balance", type=float, default=1000.0)

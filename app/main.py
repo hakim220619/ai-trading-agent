@@ -20,10 +20,14 @@ import pandas as pd
 
 from app.config import settings
 from app.mt5 import order_executor, position_manager
+from app.mt5.confidence_metadata import confidence_comment
 from app.mt5.connection import MT5_AVAILABLE, connection
 from app.mt5.market_data import get_candles, get_current_tick
+from app.mt5.daily_limits import daily_summary
 from app.ml.feature_engineering import build_features
-from app.strategy.risk_manager import build_trade_plan
+from app.runtime_config import get_scalping_setup, get_symbol_risk, get_trading_setup
+from app.strategy.risk_manager import apply_money_limits, build_trade_plan
+from app.strategy.recovery_m1_strategy import RecoveryM1Strategy
 from app.strategy.signal_generator import Signal, confirm_multi_timeframe, generate_signal
 from app.utils.logger import logger
 
@@ -50,6 +54,11 @@ class TradingBot:
         self._last_signals: dict[str, Signal] = {}
         self._last_order_results: dict[str, dict[str, object]] = {}
         self._last_auto_attempts: dict[str, float] = {}
+        self.recovery_m1 = RecoveryM1Strategy()
+
+    @property
+    def active_strategy(self) -> str:
+        return str(get_trading_setup().get("active_strategy", "confidence_m5"))
 
     # --- lifecycle ---------------------------------------------------------
     @property
@@ -97,7 +106,7 @@ class TradingBot:
     def set_symbol(self, symbol: str) -> None:
         """Switch the active market and clear symbol-specific cached state."""
         with self._lock:
-            settings.symbol = symbol.upper()
+            settings.symbol = symbol.strip()
             self._last_bar_time = None
             self.last_signal = None
             self.last_trade_plan = None
@@ -105,10 +114,9 @@ class TradingBot:
 
     def set_auto_symbols(self, symbols: list[str]) -> list[str]:
         """Set the independent markets monitored by Confidence Auto."""
-        selected = list(dict.fromkeys(symbol.upper() for symbol in symbols))
-        allowed = {"BTCUSD", "XAUUSD"}
-        if not selected or any(symbol not in allowed for symbol in selected):
-            raise ValueError("pilih minimal satu market: BTCUSD atau XAUUSD")
+        selected = list(dict.fromkeys(symbol.strip() for symbol in symbols if symbol.strip()))
+        if not selected:
+            raise ValueError("pilih minimal satu market")
         with self._lock:
             self.auto_symbols = selected
         logger.info("Confidence auto markets: {}", ", ".join(selected))
@@ -148,7 +156,49 @@ class TradingBot:
             logger.warning("MT5 not connected - skipping tick.")
             return None
 
-        symbol = (symbol or settings.symbol).upper()
+        symbol = (symbol or settings.symbol).strip()
+        if self.confidence_auto and self.active_strategy == "recovery_m1":
+            initial_direction = None
+            has_recovery_positions = self.recovery_m1.has_active_positions(symbol)
+            if not has_recovery_positions:
+                scalping_setup = get_scalping_setup()
+                daily_target_enabled = bool(scalping_setup["daily_profit_target_enabled"])
+                daily_target = float(scalping_setup["daily_profit_target"])
+                daily = daily_summary(bot_only=True)
+                if daily_target_enabled and daily_target > 0 and float(daily["profit"]) >= daily_target:
+                    self.confidence_auto = False
+                    self._stop_event.set()
+                    result = {
+                        "action": "WAIT_DAILY_PROFIT_TARGET", "ok": True,
+                        "message": f"target profit harian tercapai ({daily['profit']}/{daily_target}); auto trade dihentikan",
+                        "daily_profit": float(daily["profit"]), "daily_profit_target": daily_target,
+                        "auto_trade_stopped": True,
+                    }
+                    self.last_order_result = result
+                    self._last_order_results[symbol] = result
+                    self.last_run_ts = time.time()
+                    return None
+                sig = self.compute_signal_now("M1", symbol)
+                self.last_signal = sig
+                self._last_signals[symbol] = sig
+                buy_confidence = float(sig.ml.get("buy", 0.0) or 0.0)
+                sell_confidence = float(sig.ml.get("sell", 0.0) or 0.0)
+                threshold = float(scalping_setup["confidence_threshold"])
+                if buy_confidence > threshold and buy_confidence > sell_confidence:
+                    initial_direction = "BUY"
+                elif sell_confidence > threshold and sell_confidence > buy_confidence:
+                    initial_direction = "SELL"
+            initial_confidence = None
+            if initial_direction == "BUY":
+                initial_confidence = buy_confidence
+            elif initial_direction == "SELL":
+                initial_confidence = sell_confidence
+            result = self.recovery_m1.tick(symbol, initial_direction=initial_direction, initial_confidence=initial_confidence)
+            self.last_order_result = result
+            self._last_order_results[symbol] = result
+            self.last_run_ts = time.time()
+            return None
+
         df = get_candles(symbol, self.PRIMARY_TF, settings.candles)
         if df.empty:
             return None
@@ -191,13 +241,46 @@ class TradingBot:
     def _confidence_execution_signal(self, sig: Signal, symbol: str) -> Signal:
         """Convert a sufficiently confident ML forecast into an executable signal."""
         confidence = max(float(sig.ml.get("buy", 0.0)), float(sig.ml.get("sell", 0.0)))
-        if not sig.ml.get("model") or confidence < 0.65:
-            return Signal(price=sig.price, atr=sig.atr, confidence=confidence, ml=sig.ml, levels=sig.levels, reasons=[f"confidence {confidence:.1%} < 65%"])
+        threshold = float(get_trading_setup()["confidence_threshold"])
+        if not sig.ml.get("model") or confidence < threshold:
+            return Signal(price=sig.price, atr=sig.atr, confidence=confidence, ml=sig.ml, levels=sig.levels, reasons=[f"confidence {confidence:.1%} < {threshold:.1%}"])
+        direction = "BUY" if float(sig.ml.get("buy", 0.0)) >= float(sig.ml.get("sell", 0.0)) else "SELL"
         tick = get_current_tick(symbol)
         if not tick or time.time() - float(tick.get("time", 0.0)) > 120:
             return Signal(price=sig.price, atr=sig.atr, confidence=confidence, ml=sig.ml, levels=sig.levels, reasons=["auto blocked: market tick inactive / market closed"])
-        direction = "BUY" if float(sig.ml.get("buy", 0.0)) >= float(sig.ml.get("sell", 0.0)) else "SELL"
-        return Signal(action=direction, price=sig.price, atr=sig.atr, confidence=confidence, ml=sig.ml, levels=sig.levels, reasons=[f"confidence auto {direction} {confidence:.1%}"])
+        entry_price = float(tick["ask"] if direction == "BUY" else tick["bid"])
+        sr_ok, sr_reason = self.confidence_support_resistance_check(sig, direction, entry_price)
+        if not sr_ok:
+            return Signal(price=sig.price, atr=sig.atr, confidence=confidence, ml=sig.ml, levels=sig.levels, reasons=[sr_reason])
+        return Signal(action=direction, price=sig.price, atr=sig.atr, confidence=confidence, ml=sig.ml, levels=sig.levels, reasons=[f"confidence auto {direction} {confidence:.1%}", sr_reason])
+
+    def confidence_support_resistance_check(
+        self,
+        sig: Signal,
+        direction: str,
+        entry_price: float | None = None,
+    ) -> tuple[bool, str]:
+        """Gate Confidence Auto entries to BUY support / SELL resistance areas."""
+        price = float(entry_price or sig.price or 0.0)
+        if price <= 0:
+            return False, "auto blocked: harga entry tidak valid untuk cek support/resistance"
+        levels = sig.levels or {}
+        tolerance = 0.003
+        if direction == "BUY":
+            support = levels.get("support")
+            if support is None:
+                return False, "auto blocked: BUY butuh area support terdeteksi"
+            distance = abs(price - float(support)) / price
+            if distance > tolerance:
+                return False, f"auto blocked: BUY belum dekat support ({distance:.2%} > {tolerance:.2%})"
+            return True, f"BUY dekat support {float(support):.5f} ({distance:.2%})"
+        resistance = levels.get("resistance")
+        if resistance is None:
+            return False, "auto blocked: SELL butuh area resistance terdeteksi"
+        distance = abs(float(resistance) - price) / price
+        if distance > tolerance:
+            return False, f"auto blocked: SELL belum dekat resistance ({distance:.2%} > {tolerance:.2%})"
+        return True, f"SELL dekat resistance {float(resistance):.5f} ({distance:.2%})"
 
     def _retry_confidence_auto(self, symbol: str) -> None:
         """Retry a rejected confidence order without waiting for another M5 bar."""
@@ -212,7 +295,7 @@ class TradingBot:
         execution_signal = self._confidence_execution_signal(sig, symbol)
         if execution_signal.action not in ("BUY", "SELL"):
             return
-        if order_executor.count_open_positions(symbol, bot_only=False) >= settings.max_open_positions:
+        if order_executor.count_open_positions(symbol, bot_only=False) >= int(get_trading_setup()["max_open_positions"]):
             return
         self._last_auto_attempt_ts = time.time()
         self._last_auto_attempts[symbol] = self._last_auto_attempt_ts
@@ -221,7 +304,7 @@ class TradingBot:
 
     def _maybe_enter(self, sig: Signal, df: pd.DataFrame, confidence_sizing: bool = False, symbol: str | None = None) -> None:
         """Size and submit an order for an actionable signal (if enabled)."""
-        symbol = (symbol or settings.symbol).upper()
+        symbol = (symbol or settings.symbol).strip()
         account = connection.account_info() or {}
         balance = float(account.get("balance", 1000.0))
         tick = get_current_tick(symbol)
@@ -234,6 +317,7 @@ class TradingBot:
             risk_reward = 1.0 if sig.confidence < 0.75 else 1.20 if sig.confidence < 0.85 else 1.50
         else:
             atr_mult, risk_reward = 1.5, None
+        risk_config = get_symbol_risk(symbol)
         plan = build_trade_plan(
             direction=sig.action,
             entry=entry,
@@ -246,6 +330,7 @@ class TradingBot:
             symbol=symbol,
         )
         plan.lot = max(plan.lot, order_executor.configured_minimum_lot(symbol))
+        plan = apply_money_limits(plan, symbol, risk_config["stop_loss_money"], risk_config["take_profit_money"])
         self.last_trade_plan = plan.to_dict()
 
         if not settings.trading_enabled:
@@ -260,18 +345,20 @@ class TradingBot:
             )
             return
 
-        if order_executor.count_open_positions(symbol, bot_only=False) >= settings.max_open_positions:
+        if order_executor.count_open_positions(symbol, bot_only=False) >= int(get_trading_setup()["max_open_positions"]):
             logger.info("Max positions reached for {} - skip entry.", symbol)
             return
 
         if sig.action == "BUY":
             res = order_executor.open_buy(
                 symbol, plan.lot, plan.stop_loss, plan.take_profit,
+                comment=confidence_comment(sig.confidence, sig.action) if confidence_sizing else "ai-buy",
                 enforce_spread=not confidence_sizing,
             )
         else:
             res = order_executor.open_sell(
                 symbol, plan.lot, plan.stop_loss, plan.take_profit,
+                comment=confidence_comment(sig.confidence, sig.action) if confidence_sizing else "ai-sell",
                 enforce_spread=not confidence_sizing,
             )
         self.last_order_result = res.to_dict()
@@ -279,13 +366,14 @@ class TradingBot:
         logger.info("Entry result {}: {} | plan={}", symbol, res.message, plan.to_dict())
 
     # --- introspection -----------------------------------------------------
-    def compute_signal_now(self, timeframe: str | None = None) -> Signal:
+    def compute_signal_now(self, timeframe: str | None = None, symbol: str | None = None) -> Signal:
         """Compute (without trading) the current signal for inspection."""
         tf = timeframe or self.PRIMARY_TF
-        df = get_candles(settings.symbol, tf, settings.candles)
+        symbol = (symbol or settings.symbol).strip()
+        df = get_candles(symbol, tf, settings.candles)
         if len(df) < 2:
             return Signal(reasons=["no data / MT5 unavailable"])
-        frames = self._feature_frames(df.iloc[:-1].copy(), tf, settings.symbol)
+        frames = self._feature_frames(df.iloc[:-1].copy(), tf, symbol)
         return confirm_multi_timeframe(generate_signal(frames[tf]), frames, primary=tf)
 
     def preview_trade_plan(
@@ -295,17 +383,20 @@ class TradingBot:
         atr_mult: float = 1.5,
         risk_reward: float | None = None,
         use_levels: bool = True,
+        symbol: str | None = None,
     ) -> dict[str, object] | None:
         """Return the current SL/TP/lot proposal without placing an order."""
         direction = direction_override or sig.action
         if direction not in ("BUY", "SELL"):
             return None
+        symbol = (symbol or settings.symbol).strip()
         account = connection.account_info() or {}
         balance = float(account.get("balance", 1000.0))
-        tick = get_current_tick(settings.symbol)
+        tick = get_current_tick(symbol)
         entry = sig.price
         if tick:
             entry = tick["ask"] if direction == "BUY" else tick["bid"]
+        risk_config = get_symbol_risk(symbol)
         plan = build_trade_plan(
             direction=direction,
             entry=entry,
@@ -315,8 +406,10 @@ class TradingBot:
             swing_low=sig.levels.get("support") if use_levels else None,      # type: ignore[arg-type]
             atr_mult=atr_mult,
             risk_reward=risk_reward,
+            symbol=symbol,
         )
-        plan.lot = max(plan.lot, order_executor.configured_minimum_lot(settings.symbol))
+        plan.lot = max(plan.lot, order_executor.configured_minimum_lot(symbol))
+        plan = apply_money_limits(plan, symbol, risk_config["stop_loss_money"], risk_config["take_profit_money"])
         return plan.to_dict()
 
     def _feature_frames(
@@ -326,7 +419,7 @@ class TradingBot:
         symbol: str | None = None,
     ) -> dict[str, pd.DataFrame]:
         """Build features for the primary and configured context timeframes."""
-        symbol = (symbol or settings.symbol).upper()
+        symbol = (symbol or settings.symbol).strip()
         frames = {primary_tf: build_features(primary_df)}
         for timeframe in dict.fromkeys(settings.timeframes):
             if timeframe == primary_tf:

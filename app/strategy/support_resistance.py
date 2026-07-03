@@ -22,6 +22,10 @@ class SRLevels:
     bos_level: float | None = None
     choch: str | None = None  # bullish | bearish | None
     choch_level: float | None = None
+    fibonacci_support: float | None = None
+    fibonacci_resistance: float | None = None
+    fibonacci_direction: str | None = None
+    fibonacci: dict[str, float] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -36,6 +40,10 @@ class SRLevels:
             "bos_level": self.bos_level,
             "choch": self.choch,
             "choch_level": self.choch_level,
+            "fibonacci_support": self.fibonacci_support,
+            "fibonacci_resistance": self.fibonacci_resistance,
+            "fibonacci_direction": self.fibonacci_direction,
+            "fibonacci": self.fibonacci,
         }
 
 
@@ -98,6 +106,26 @@ def detect_levels(df: pd.DataFrame, left: int = 3, right: int = 3, tolerance: fl
     # Nearest support = highest swing low below price.
     below = [low for low in lows if low < price]
     result.support = max(below) if below else None
+
+    # Fibonacci follows the latest confirmed swing leg, rather than whichever
+    # support/resistance happens to be nearest to the current price.
+    if highs and lows:
+        last_high = highs[-1]
+        last_low = lows[-1]
+        high_indices = np.flatnonzero(df["high"].to_numpy() == last_high)
+        low_indices = np.flatnonzero(df["low"].to_numpy() == last_low)
+        high_index = int(high_indices[-1]) if len(high_indices) else -1
+        low_index = int(low_indices[-1]) if len(low_indices) else -1
+        if last_high > last_low and high_index != low_index:
+            span = last_high - last_low
+            result.fibonacci_support = last_low
+            result.fibonacci_resistance = last_high
+            result.fibonacci_direction = "bullish" if low_index < high_index else "bearish"
+            ratios = (0.236, 0.382, 0.500, 0.618, 0.786)
+            if result.fibonacci_direction == "bullish":
+                result.fibonacci = {f"{ratio:.3f}": last_high - span * ratio for ratio in ratios}
+            else:
+                result.fibonacci = {f"{ratio:.3f}": last_low + span * ratio for ratio in ratios}
 
     # Break of Structure (continuation) and Change of Character (reversal).
     # Only close-to-close crossings count, preventing the same break from being

@@ -8,6 +8,32 @@ from app.strategy.support_resistance import detect_levels
 
 
 class MarketStructureTests(unittest.TestCase):
+    def test_fibonacci_uses_latest_bullish_swing_leg(self) -> None:
+        close = [10, 9, 8, 7, 8, 10, 12, 14, 13, 12, 12]
+        frame = pd.DataFrame({
+            "high": [value + 0.5 for value in close],
+            "low": [value - 0.5 for value in close],
+            "close": close,
+        })
+        levels = detect_levels(frame, left=2, right=2)
+        self.assertEqual(levels.fibonacci_direction, "bullish")
+        self.assertEqual(levels.fibonacci_support, 6.5)
+        self.assertEqual(levels.fibonacci_resistance, 14.5)
+        self.assertAlmostEqual(levels.fibonacci["0.500"], 10.5)
+
+    def test_fibonacci_uses_latest_bearish_swing_leg(self) -> None:
+        close = [10, 11, 12, 14, 13, 11, 9, 7, 8, 9, 9]
+        frame = pd.DataFrame({
+            "high": [value + 0.5 for value in close],
+            "low": [value - 0.5 for value in close],
+            "close": close,
+        })
+        levels = detect_levels(frame, left=2, right=2)
+        self.assertEqual(levels.fibonacci_direction, "bearish")
+        self.assertEqual(levels.fibonacci_support, 6.5)
+        self.assertEqual(levels.fibonacci_resistance, 14.5)
+        self.assertAlmostEqual(levels.fibonacci["0.500"], 10.5)
+
     def test_bullish_bos_after_higher_high_and_higher_low(self) -> None:
         frame = pd.DataFrame(
             {

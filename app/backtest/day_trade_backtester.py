@@ -107,6 +107,12 @@ def run_day_trade_backtest(
         preset = None
         frame = prepare_snd_m1_features(df).reset_index(drop=True)
         profile_name = f"{settings.symbol}-snd-m1"
+    elif strategy == "rsi":
+        from app.strategy.rsi_strategy import prepare_rsi_features
+
+        preset = None
+        frame = prepare_rsi_features(df).reset_index(drop=True)
+        profile_name = f"{settings.symbol}-rsi"
     elif strategy == "m1":
         from app.strategy.scalping_m1_strategy import get_m1_preset, prepare_m1_features
 
@@ -124,7 +130,7 @@ def run_day_trade_backtest(
         frame = prepare_day_trade_features(df, breakout_period=preset.breakout_period).reset_index(drop=True)
         profile_name = preset.name
     else:
-        raise ValueError("strategy must be day, m1, ma-m1, snd-m1, or m5")
+        raise ValueError("strategy must be day, m1, ma-m1, snd-m1, rsi, or m5")
     if "time" not in frame:
         raise ValueError("CSV requires a time column for daily limits")
     frame["time"] = pd.to_datetime(frame["time"], errors="coerce")
@@ -256,6 +262,10 @@ def run_day_trade_backtest(
                 from app.strategy.scalping_snd_m1_strategy import generate_snd_m1_signal
 
                 signal = generate_snd_m1_signal(row, settings.symbol, spread_points, max_spread_points)
+            elif strategy == "rsi":
+                from app.strategy.rsi_strategy import generate_rsi_signal
+
+                signal = generate_rsi_signal(row, settings.symbol, spread_points, max_spread_points)
             elif strategy == "m1":
                 from app.strategy.scalping_m1_strategy import generate_m1_signal
 
@@ -280,6 +290,10 @@ def run_day_trade_backtest(
                     from app.strategy.scalping_snd_m1_strategy import build_snd_m1_plan
 
                     plan = build_snd_m1_plan(signal.action, entry, signal.atr, balance, settings.symbol, risk_percent)
+                elif strategy == "rsi":
+                    from app.strategy.rsi_strategy import build_rsi_plan
+
+                    plan = build_rsi_plan(signal.action, entry, signal.atr, balance, settings.symbol, risk_percent)
                 elif strategy == "m1":
                     from app.strategy.scalping_m1_strategy import build_m1_plan
 

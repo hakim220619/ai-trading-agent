@@ -6,6 +6,8 @@ from typing import Any
 
 from app.config import settings
 from app.mt5.connection import MT5_AVAILABLE, connection, mt5
+from app.mt5.daily_limits import check_daily_limits
+from app.runtime_config import get_trading_setup
 from app.utils.helpers import round_to_step
 from app.utils.logger import logger
 
@@ -67,10 +69,11 @@ def _normalize_lot(symbol: str, lot: float) -> float:
 def configured_minimum_lot(symbol: str) -> float:
     """Return the application-level minimum lot for configured instruments."""
     upper = symbol.upper()
+    setup = get_trading_setup()
     if "BTCUSD" in upper:
-        return settings.btcusd_min_lot
+        return float(setup["btcusd_min_lot"])
     if "XAUUSD" in upper or "GOLD" in upper:
-        return settings.xauusd_min_lot
+        return float(setup["xauusd_min_lot"])
     return settings.lot_default
 
 
@@ -132,6 +135,8 @@ def _open(
     tp: float,
     comment: str,
     enforce_spread: bool = True,
+    allow_duplicate: bool = False,
+    enforce_position_limit: bool = True,
 ) -> OrderResult:
     """Shared open-position routine with all safety checks."""
     if not settings.trading_enabled:
@@ -152,14 +157,18 @@ def _open(
             return OrderResult(False, f"spread check failed: {why}")
 
     open_count = count_open_positions(symbol, bot_only=False)
-    if open_count >= settings.max_open_positions:
-        return OrderResult(False, f"max open positions reached ({open_count}/{settings.max_open_positions})")
-    if has_open_position(symbol, direction):
+    max_positions = int(get_trading_setup()["max_open_positions"])
+    if enforce_position_limit and open_count >= max_positions:
+        return OrderResult(False, f"max open positions reached ({open_count}/{max_positions})")
+    if not allow_duplicate and has_open_position(symbol, direction):
         return OrderResult(False, f"duplicate {direction} position exists")
 
     lot = _normalize_lot(symbol, lot)
     if lot <= 0:
         return OrderResult(False, "invalid lot size after normalisation")
+    ok, why, _summary = check_daily_limits(next_lot=lot, bot_only=True)
+    if not ok:
+        return OrderResult(False, why)
 
     tick = mt5.symbol_info_tick(symbol)
     if tick is None:
@@ -206,9 +215,11 @@ def open_buy(
     tp: float,
     comment: str = "ai-buy",
     enforce_spread: bool = True,
+    allow_duplicate: bool = False,
+    enforce_position_limit: bool = True,
 ) -> OrderResult:
     """Open a BUY market position."""
-    return _open(symbol, "buy", lot, sl, tp, comment, enforce_spread=enforce_spread)
+    return _open(symbol, "buy", lot, sl, tp, comment, enforce_spread, allow_duplicate, enforce_position_limit)
 
 
 def open_sell(
@@ -218,9 +229,11 @@ def open_sell(
     tp: float,
     comment: str = "ai-sell",
     enforce_spread: bool = True,
+    allow_duplicate: bool = False,
+    enforce_position_limit: bool = True,
 ) -> OrderResult:
     """Open a SELL market position."""
-    return _open(symbol, "sell", lot, sl, tp, comment, enforce_spread=enforce_spread)
+    return _open(symbol, "sell", lot, sl, tp, comment, enforce_spread, allow_duplicate, enforce_position_limit)
 
 
 def _close_position(position: Any) -> OrderResult:
@@ -247,6 +260,19 @@ def _close_position(position: Any) -> OrderResult:
         "type_filling": _filling_type(position.symbol),
     }
     return _send(request)
+
+
+def close_position_ticket(ticket: int, symbol: str | None = None) -> OrderResult:
+    """Close one bot-owned position by ticket."""
+    if not MT5_AVAILABLE or not connection.ensure_connected():
+        return OrderResult(False, "MT5 not connected")
+    positions = mt5.positions_get(symbol=symbol) if symbol else mt5.positions_get()
+    for position in positions or []:
+        if int(position.ticket) == int(ticket):
+            if position.magic != settings.magic_number:
+                return OrderResult(False, "position is not owned by this bot")
+            return _close_position(position)
+    return OrderResult(False, f"position ticket {ticket} not found")
 
 
 def close_all_positions(
@@ -338,7 +364,8 @@ def update_trailing_stop(symbol: str | None = None) -> list[dict[str, Any]]:
     Activates once a position is in profit by ``trailing_start_points`` and then
     keeps the SL trailing ``trailing_step_points`` behind price.
     """
-    if not settings.trailing_stop:
+    setup = get_trading_setup()
+    if not bool(setup["trailing_stop"]):
         return []
     if not MT5_AVAILABLE or not connection.ensure_connected():
         return []
@@ -355,7 +382,7 @@ def update_trailing_stop(symbol: str | None = None) -> list[dict[str, Any]]:
     if tick is None:
         return []
 
-    money_step = settings.trailing_profit_step_money
+    money_step = float(setup["trailing_profit_step_money"])
     if money_step > 0:
         tick_size = float(info.get("trade_tick_size", point) or point)
         tick_value = float(info.get("trade_tick_value", 0.0) or 0.0)

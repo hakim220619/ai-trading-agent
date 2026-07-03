@@ -17,16 +17,24 @@ from app.api.schemas import (
     ManualTradeRequest,
     MT5LoginRequest,
     PositionsResponse,
+    ScalpingSetupRequest,
     SignalResponse,
     SymbolRequest,
+    SymbolRiskConfigRequest,
     StatusResponse,
     TrainRequest,
     TradeHistoryResponse,
+    TradingSetupRequest,
 )
 from app.config import settings
 from app.mt5 import order_executor, position_manager
 from app.mt5.connection import MT5_AVAILABLE, connection
+from app.mt5.daily_limits import daily_summary
+from app.mt5.confidence_metadata import confidence_comment
+from app.mt5.market_data import get_candles
 from app.ml.predict import get_model
+from app.runtime_config import get_all_symbol_risk, get_scalping_setup, get_trading_setup, save_scalping_setup, save_symbol_risk, save_trading_setup
+from app.strategy import support_resistance as sr
 from app.utils.logger import logger
 
 router = APIRouter()
@@ -48,22 +56,32 @@ def dashboard() -> str:
 @router.get("/strategies", tags=["monitor"])
 def strategies() -> dict:
     """Describe what is active live versus available only for backtesting."""
+    setup = get_trading_setup()
     return {
         "active_symbol": settings.symbol,
         "auto_symbols": _get_bot().auto_symbols,
-        "active_timeframe": "M5",
+        "active_strategy": setup["active_strategy"],
+        "active_timeframe": "M1" if setup["active_strategy"] == "recovery_m1" else "M5",
         "confidence_auto": _get_bot().confidence_auto,
-        "live": [
+        "choices": [
+            {"id": "confidence_m5", "name": "Confidence M5", "detail": "Strategi lama: XGBoost + technical/MTF dan pengaturan risiko yang ada."},
+            {"id": "recovery_m1", "name": "Counter Basket Scalping M1", "detail": "Entry awal mengikuti confidence M1; lot 0.01 dengan batas loss $3, lalu counter 0.03 dan lot berikutnya ×2: 0.06, 0.12, 0.24, ..."},
+        ],
+        "live": ([
+            {"name": "Counter Basket Scalping M1", "detail": "Entry awal BUY/SELL hanya jika confidence M1 salah satu sisi > 50%. Lot awal 0.01 (loss $3), counter 0.03, kemudian lot dikali 2: 0.06, 0.12, 0.24, ..."},
+            {"name": "Risk & Execution", "detail": "Lot memakai minimum lot market; tanpa SL/TP harga, tetap tunduk pada batas trading harian."},
+        ] if setup["active_strategy"] == "recovery_m1" else [
             {"name": "Technical Trend", "detail": "EMA20/EMA50/EMA200 + RSI"},
             {"name": "Support & Resistance", "detail": "Swing, breakout, retest, BOS, dan CHoCH"},
-            {"name": "XGBoost Confidence", "detail": "BUY/SELL langsung dari probabilitas terbesar jika confidence >= 65%; tanpa konfirmasi teknis/MTF/spread"},
+            {"name": "XGBoost Confidence", "detail": f"BUY/SELL langsung dari probabilitas terbesar jika confidence >= {float(setup['confidence_threshold']):.0%}; tanpa konfirmasi teknis/MTF/spread"},
             {"name": "Multi-Timeframe", "detail": "Konfirmasi konteks M15 dan H1"},
             {"name": "Risk & Execution", "detail": "ATR SL/TP adaptif, maksimal 3 posisi, trailing SL mengunci profit setiap kenaikan $1"},
-        ],
+        ]),
         "backtest_only": [
             {"name": "Combined Scalping M1", "module": "scalping_m1_strategy"},
             {"name": "MA Crossover M1", "module": "scalping_ma_m1_strategy"},
             {"name": "Supply & Demand M1", "module": "scalping_snd_m1_strategy"},
+            {"name": "RSI Reversal", "module": "rsi_strategy"},
             {"name": "Combined Scalping M5", "module": "scalping_m5_strategy"},
             {"name": "Universal Day Trade", "module": "day_trade_strategy"},
         ],
@@ -73,10 +91,12 @@ def strategies() -> dict:
 @router.get("/status", response_model=StatusResponse, tags=["monitor"])
 def status() -> StatusResponse:
     bot = _get_bot()
+    setup = get_trading_setup()
     connected = MT5_AVAILABLE and connection.ensure_connected()
     account_info = connection.account_info() if connected else None
     positions = position_manager.get_open_positions(bot_only=False) if connected else []
     total_profit = round(sum(float(p.get("profit", 0.0)) for p in positions), 2)
+    daily = daily_summary(bot_only=True) if connected else {"profit": 0.0, "lot": 0.0}
     trade_status = connection.trading_status() if connected else {
         "terminal_trade_allowed": False,
         "account_trade_allowed": False,
@@ -95,8 +115,19 @@ def status() -> StatusResponse:
         account_currency=(str(account_info["currency"]) if account_info else None),
         total_profit=total_profit,
         confidence_auto=bot.confidence_auto,
+        active_strategy=bot.active_strategy,
+        strategy_status=(bot.recovery_m1.status(settings.symbol) if bot.active_strategy == "recovery_m1" else {}),
         auto_symbols=bot.auto_symbols,
-        max_open_positions=settings.max_open_positions,
+        max_open_positions=int(setup["max_open_positions"]),
+        confidence_threshold=float(setup["confidence_threshold"]),
+        trailing_stop=bool(setup["trailing_stop"]),
+        trailing_profit_step_money=float(setup["trailing_profit_step_money"]),
+        daily_profit_limit_enabled=bool(setup["daily_profit_limit_enabled"]),
+        daily_profit_limit_money=float(setup["daily_profit_limit_money"]),
+        daily_lot_limit_enabled=bool(setup["daily_lot_limit_enabled"]),
+        daily_lot_limit=float(setup["daily_lot_limit"]),
+        daily_profit_today=float(daily["profit"]),
+        daily_lot_today=float(daily["lot"]),
         **trade_status,
     )
 
@@ -104,14 +135,157 @@ def status() -> StatusResponse:
 @router.post("/symbol", response_model=ActionResponse, tags=["control"])
 def select_symbol(req: SymbolRequest) -> ActionResponse:
     bot = _get_bot()
-    if not connection.symbol_info(req.symbol):
-        return ActionResponse(ok=False, message=f"symbol {req.symbol} tidak tersedia di MT5")
-    bot.set_symbol(req.symbol)
+    symbol = req.symbol.strip()
+    if not connection.symbol_info(symbol):
+        return ActionResponse(ok=False, message=f"symbol {symbol} tidak tersedia di MT5")
+    bot.set_symbol(symbol)
     return ActionResponse(
         ok=True,
-        message=f"market aktif diubah ke {req.symbol}",
-        detail={"symbol": req.symbol, "bot_running": bot.running},
+        message=f"market aktif diubah ke {symbol}",
+        detail={"symbol": symbol, "bot_running": bot.running},
     )
+
+
+@router.get("/risk-config", tags=["monitor"])
+def risk_config() -> dict:
+    return {
+        "symbols": get_all_symbol_risk(),
+        "trading_setup": get_trading_setup(),
+        "daily_summary": daily_summary(bot_only=True),
+        "unit": "account_currency",
+        "zero_means": "automatic_atr",
+    }
+
+
+@router.get("/markets", tags=["monitor"])
+def markets(only_open: bool = True, search: str | None = None, limit: int = 500, max_tick_age_minutes: int = 180) -> dict:
+    """List broker markets from MT5 with a best-effort open status."""
+    limit = max(1, min(limit, 2000))
+    max_tick_age_minutes = max(1, min(max_tick_age_minutes, 1440))
+    rows = connection.list_markets(
+        only_open=only_open,
+        search=search,
+        limit=limit,
+        max_tick_age_minutes=max_tick_age_minutes,
+    )
+    return {
+        "connected": bool(connection.connected),
+        "only_open": only_open,
+        "search": search,
+        "count": len(rows),
+        "markets": rows,
+    }
+
+
+@router.get("/candles", tags=["monitor"])
+def candles(symbol: str | None = None, timeframe: str = "M5", count: int = 120) -> dict:
+    selected_symbol = symbol.strip() if symbol else settings.symbol
+    timeframe = timeframe.upper()
+    count = max(30, min(count, 500))
+    df = get_candles(selected_symbol, timeframe, count)
+    if df.empty:
+        return {"symbol": selected_symbol, "timeframe": timeframe, "candles": [], "levels": {}}
+    levels = sr.detect_levels(df).to_dict()
+    close = df["close"].astype(float)
+    delta = close.diff()
+    average_gain = delta.clip(lower=0).ewm(alpha=1 / 14, adjust=False, min_periods=14).mean()
+    average_loss = (-delta.clip(upper=0)).ewm(alpha=1 / 14, adjust=False, min_periods=14).mean()
+    relative_strength = average_gain / average_loss.replace(0, float("nan"))
+    rsi_values = 100 - (100 / (1 + relative_strength))
+    rsi_values = rsi_values.mask((average_loss == 0) & (average_gain > 0), 100.0).fillna(50.0)
+    rows = []
+    chart_df = df.copy()
+    chart_df["rsi"] = rsi_values
+    for row in chart_df.tail(count).to_dict("records"):
+        timestamp = row.get("time")
+        if hasattr(timestamp, "timestamp"):
+            timestamp = int(timestamp.timestamp())
+        rows.append({
+            "time": timestamp,
+            "open": float(row.get("open", 0.0) or 0.0),
+            "high": float(row.get("high", 0.0) or 0.0),
+            "low": float(row.get("low", 0.0) or 0.0),
+            "close": float(row.get("close", 0.0) or 0.0),
+            "rsi": float(row.get("rsi", 50.0) or 50.0),
+        })
+    return {
+        "symbol": selected_symbol,
+        "timeframe": timeframe,
+        "candles": rows,
+        "levels": levels,
+        "strategies": _chart_strategy_signals(df, selected_symbol, timeframe),
+    }
+
+
+def _chart_strategy_signals(df, symbol: str, timeframe: str) -> list[dict[str, object]]:
+    """Evaluate every standalone strategy for the chart's latest candle."""
+    from app.strategy.day_trade_strategy import generate_day_trade_signal, get_day_trade_preset, prepare_day_trade_features
+    from app.strategy.rsi_strategy import generate_rsi_signal, prepare_rsi_features
+    from app.strategy.scalping_m1_strategy import generate_m1_signal, prepare_m1_features
+    from app.strategy.scalping_m5_strategy import generate_m5_signal, prepare_m5_features
+    from app.strategy.scalping_ma_m1_strategy import generate_ma_m1_signal, prepare_ma_m1_features
+    from app.strategy.scalping_snd_m1_strategy import generate_snd_m1_signal, prepare_snd_m1_features
+
+    spread = float(df.iloc[-1].get("spread", 0.0) or 0.0)
+    maximum = max(float(settings.max_spread_points), spread)
+    definitions = [
+        ("Combined M1", "M1", lambda: generate_m1_signal(prepare_m1_features(df).iloc[-1], symbol, spread, maximum)),
+        ("EMA Crossover M1", "M1", lambda: generate_ma_m1_signal(prepare_ma_m1_features(df).iloc[-1], symbol, spread, maximum)),
+        ("Supply/Demand M1", "M1", lambda: generate_snd_m1_signal(prepare_snd_m1_features(df).iloc[-1], symbol, spread, maximum)),
+        ("RSI Reversal", timeframe, lambda: generate_rsi_signal(prepare_rsi_features(df).iloc[-1], symbol, spread, maximum)),
+        ("Combined M5", "M5", lambda: generate_m5_signal(prepare_m5_features(df, symbol).iloc[-1], symbol, spread, maximum)),
+        ("Universal Day Trade", timeframe, lambda: generate_day_trade_signal(
+            prepare_day_trade_features(df, get_day_trade_preset(symbol).breakout_period).iloc[-1],
+            spread,
+            maximum,
+            get_day_trade_preset(symbol),
+        )),
+    ]
+    results: list[dict[str, object]] = []
+    for name, intended_timeframe, evaluate in definitions:
+        try:
+            signal = evaluate()
+            results.append({
+                "name": name,
+                "action": signal.action,
+                "reason": signal.reasons[0] if signal.reasons else "tidak ada alasan",
+                "timeframe": intended_timeframe,
+                "timeframe_match": intended_timeframe == timeframe,
+            })
+        except Exception as exc:
+            logger.warning("Chart strategy {} failed: {}", name, exc)
+            results.append({"name": name, "action": "WAIT", "reason": "indikator belum siap", "timeframe": intended_timeframe, "timeframe_match": False})
+    return results
+
+
+@router.post("/risk-config", response_model=ActionResponse, tags=["control"])
+def update_risk_config(req: SymbolRiskConfigRequest) -> ActionResponse:
+    values = save_symbol_risk(req.symbol, req.stop_loss_money, req.take_profit_money)
+    return ActionResponse(
+        ok=True,
+        message=f"konfigurasi SL/TP {req.symbol} berhasil disimpan",
+        detail={"symbol": req.symbol, **values},
+    )
+
+
+@router.post("/trading-setup", response_model=ActionResponse, tags=["control"])
+def update_trading_setup(req: TradingSetupRequest) -> ActionResponse:
+    payload = req.model_dump()
+    if payload.get("active_strategy") is None:
+        payload.pop("active_strategy", None)
+    values = save_trading_setup(payload)
+    return ActionResponse(ok=True, message="konfigurasi Auto Trade berhasil disimpan", detail=values)
+
+
+@router.get("/scalping-setup", tags=["monitor"])
+def scalping_setup() -> dict[str, float | bool]:
+    return get_scalping_setup()
+
+
+@router.post("/scalping-setup", response_model=ActionResponse, tags=["control"])
+def update_scalping_setup(req: ScalpingSetupRequest) -> ActionResponse:
+    values = save_scalping_setup(req.model_dump())
+    return ActionResponse(ok=True, message="konfigurasi Counter Scalping M1 tersimpan", detail=values)
 
 
 @router.get("/account", response_model=AccountResponse, tags=["monitor"])
@@ -146,18 +320,32 @@ def positions(all_account: bool = True) -> PositionsResponse:
 
 
 @router.get("/trade-history", response_model=TradeHistoryResponse, tags=["monitor"])
-def trade_history(days: int = 30, limit: int = 100, all_account: bool = True) -> TradeHistoryResponse:
+def trade_history(days: int = 30, limit: int = 100, all_account: bool = True, result: str = "all") -> TradeHistoryResponse:
     from app.mt5.trade_history import get_closed_deals, summarize_closed_deals
 
     days = max(1, min(days, 3650))
     limit = max(1, min(limit, 1000))
+    result = result.lower()
     all_deals = get_closed_deals(days=days, limit=None, bot_only=not all_account)
+    if result in {"win", "loss", "be"}:
+        all_deals = [deal for deal in all_deals if str(deal.get("result", "")).lower() == result]
     all_deals.sort(key=lambda deal: (str(deal.get("time", "")), int(deal.get("ticket", 0))), reverse=True)
     return TradeHistoryResponse(
         days=days,
         summary=summarize_closed_deals(all_deals),
         deals=all_deals[:limit],
     )
+
+
+@router.get("/trade-hour-analysis", tags=["monitor"])
+def trade_hour_analysis(days: int = 3650, tz_offset: int = 0, all_account: bool = True, result: str = "all") -> dict:
+    from app.mt5.trade_history import get_closed_deals, summarize_by_open_hour
+
+    deals = get_closed_deals(days=max(1, min(days, 3650)), limit=None, bot_only=not all_account)
+    result = result.lower()
+    if result in {"win", "loss", "be"}:
+        deals = [deal for deal in deals if str(deal.get("result", "")).lower() == result]
+    return summarize_by_open_hour(deals, max(-840, min(tz_offset, 840)))
 
 
 @router.get("/capital-curve", tags=["monitor"])
@@ -168,30 +356,42 @@ def capital_curve(days: int = 3650) -> dict:
 
 
 @router.get("/signal", response_model=SignalResponse, tags=["monitor"])
-def signal(timeframe: str | None = None) -> SignalResponse:
+def signal(timeframe: str | None = None, symbol: str | None = None) -> SignalResponse:
     bot = _get_bot()
     tf = timeframe or bot.PRIMARY_TF
-    sig = bot.compute_signal_now(tf)
+    selected_symbol = symbol.strip() if symbol else settings.symbol
+    if symbol and not connection.symbol_info(selected_symbol):
+        raise HTTPException(status_code=400, detail=f"symbol {selected_symbol} tidak tersedia di MT5")
+    sig = bot.compute_signal_now(tf, selected_symbol)
     payload = sig.to_dict()
     confidence = float(payload.get("confidence", 0.0) or 0.0)
     ml = payload.get("ml", {})
-    plan = bot.preview_trade_plan(sig)
-    if confidence >= 0.65 and isinstance(ml, dict):
+    plan = bot.preview_trade_plan(sig, symbol=selected_symbol)
+    threshold = float(get_trading_setup()["confidence_threshold"])
+    if confidence >= threshold and isinstance(ml, dict):
         recommendation = "BUY" if float(ml.get("buy", 0.0)) >= float(ml.get("sell", 0.0)) else "SELL"
+        sr_ok, sr_reason = bot.confidence_support_resistance_check(sig, recommendation)
         plan = bot.preview_trade_plan(
             sig,
             direction_override=recommendation,
             atr_mult=0.60,
             risk_reward=1.0,
             use_levels=False,
+            symbol=selected_symbol,
         )
         if plan is not None:
             plan["recommendation"] = recommendation
             plan["confidence"] = round(confidence, 4)
-            plan["execution_allowed"] = sig.action == recommendation
-            plan["status"] = "READY" if sig.action == recommendation else "ANALYSIS_ONLY"
-            plan["blocked_reasons"] = [] if sig.action == recommendation else sig.reasons
-    open_positions = position_manager.get_open_positions(settings.symbol, bot_only=False)
+            model_ready = bool(sig.ml.get("model"))
+            blocked_reasons = []
+            if not model_ready:
+                blocked_reasons.append("model ML belum tersedia")
+            if not sr_ok:
+                blocked_reasons.append(sr_reason)
+            plan["execution_allowed"] = model_ready and sr_ok
+            plan["status"] = "READY" if plan["execution_allowed"] else "ANALYSIS_ONLY"
+            plan["blocked_reasons"] = blocked_reasons
+    open_positions = position_manager.get_open_positions(selected_symbol, bot_only=False)
     position_rows = [
         {
             "ticket": position.get("ticket"),
@@ -254,18 +454,36 @@ def confidence_auto_start() -> ActionResponse:
     started = bot.start(confidence_auto=True)
     return ActionResponse(
         ok=started,
-        message="auto trade confidence aktif" if started else "gagal mengaktifkan auto trade confidence",
-        detail={"threshold": 0.65, "symbols": bot.auto_symbols},
+        message=f"auto trade {bot.active_strategy} aktif" if started else f"gagal mengaktifkan auto trade {bot.active_strategy}",
+        detail={"strategy": bot.active_strategy, "threshold": get_trading_setup()["confidence_threshold"], "symbols": bot.auto_symbols},
     )
+
+
+@router.post("/trade/strategy/{strategy_id}", response_model=ActionResponse, tags=["control"])
+def select_strategy(strategy_id: str) -> ActionResponse:
+    bot = _get_bot()
+    if strategy_id not in {"confidence_m5", "recovery_m1"}:
+        return ActionResponse(ok=False, message="strategi tidak dikenal")
+    if bot.running:
+        return ActionResponse(ok=False, message="hentikan Auto Trade sebelum mengganti strategi")
+    setup = get_trading_setup()
+    setup["active_strategy"] = strategy_id
+    saved = save_trading_setup(setup)
+    label = "Confidence M5" if strategy_id == "confidence_m5" else "Counter Basket Scalping M1"
+    return ActionResponse(ok=True, message=f"strategi aktif: {label}", detail={"active_strategy": saved["active_strategy"]})
 
 
 @router.post("/trade/confidence-auto/markets", response_model=ActionResponse, tags=["control"])
 def confidence_auto_markets(req: AutoMarketsRequest) -> ActionResponse:
     bot = _get_bot()
-    unavailable = [symbol for symbol in req.symbols if not connection.symbol_info(symbol)]
+    symbols = list(dict.fromkeys(symbol.strip() for symbol in req.symbols if symbol.strip()))
+    unavailable = [symbol for symbol in symbols if not connection.symbol_info(symbol)]
     if unavailable:
         return ActionResponse(ok=False, message=f"symbol tidak tersedia di MT5: {', '.join(unavailable)}")
-    selected = bot.set_auto_symbols(req.symbols)
+    try:
+        selected = bot.set_auto_symbols(symbols)
+    except ValueError as exc:
+        return ActionResponse(ok=False, message=str(exc))
     return ActionResponse(
         ok=True,
         message=f"market Auto Confidence: {' + '.join(selected)}",
@@ -319,12 +537,12 @@ def trade_manual(req: ManualTradeRequest) -> ActionResponse:
     if req.direction == "BUY":
         result = order_executor.open_buy(
             settings.symbol, req.lot, float(plan["stop_loss"]), float(plan["take_profit"]),
-            "dashboard-buy", enforce_spread=False,
+            confidence_comment(sig.confidence, req.direction), enforce_spread=False,
         )
     else:
         result = order_executor.open_sell(
             settings.symbol, req.lot, float(plan["stop_loss"]), float(plan["take_profit"]),
-            "dashboard-sell", enforce_spread=False,
+            confidence_comment(sig.confidence, req.direction), enforce_spread=False,
         )
     detail = {"plan": plan, "result": result.to_dict()}
     return ActionResponse(ok=result.ok, message=result.message, detail=detail)

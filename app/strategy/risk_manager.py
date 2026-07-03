@@ -33,6 +33,34 @@ class TradePlan:
         }
 
 
+def apply_money_limits(
+    plan: TradePlan,
+    symbol: str,
+    stop_loss_money: float = 0.0,
+    take_profit_money: float = 0.0,
+) -> TradePlan:
+    """Convert account-currency SL/TP amounts into broker-aware prices."""
+    if stop_loss_money <= 0 and take_profit_money <= 0:
+        return plan
+    meta = _symbol_meta(symbol)
+    value_per_price_unit = plan.lot * meta["tick_value"] / meta["tick_size"]
+    if value_per_price_unit <= 0:
+        return plan
+    min_distance = meta["stops_level"] * meta["point"]
+    sl_distance = max(min_distance, stop_loss_money / value_per_price_unit) if stop_loss_money > 0 else abs(plan.entry - plan.stop_loss)
+    tp_distance = max(min_distance, take_profit_money / value_per_price_unit) if take_profit_money > 0 else abs(plan.take_profit - plan.entry)
+    digits = int(meta["digits"])
+    if plan.direction == "BUY":
+        plan.stop_loss = round(plan.entry - sl_distance, digits)
+        plan.take_profit = round(plan.entry + tp_distance, digits)
+    else:
+        plan.stop_loss = round(plan.entry + sl_distance, digits)
+        plan.take_profit = round(plan.entry - tp_distance, digits)
+    plan.risk_money = stop_loss_money if stop_loss_money > 0 else plan.risk_money
+    plan.rr = tp_distance / sl_distance if sl_distance > 0 else plan.rr
+    return plan
+
+
 def _symbol_meta(symbol: str) -> dict[str, float]:
     """Return tick value / size / volume constraints with sane fallbacks.
 
@@ -106,6 +134,8 @@ def build_trade_plan(
     symbol: str | None = None,
     atr_mult: float = 1.5,
     risk_reward: float | None = None,
+    fixed_stop_distance: float = 0.0,
+    fixed_take_profit_distance: float = 0.0,
 ) -> TradePlan:
     """Build a full trade plan (SL/TP/lot) for a BUY or SELL.
 
@@ -116,17 +146,18 @@ def build_trade_plan(
     direction = direction.upper()
     rr = settings.risk_reward if risk_reward is None else risk_reward
     atr_dist = max(atr_value * atr_mult, entry * 0.0005)  # floor to avoid tiny SL
+    stop_dist = fixed_stop_distance if fixed_stop_distance > 0 else atr_dist
 
     if direction == "BUY":
-        sl = swing_low if (swing_low and swing_low < entry) else entry - atr_dist
-        sl = min(sl, entry - atr_dist) if swing_low else sl
+        sl = entry - stop_dist if fixed_stop_distance > 0 else (swing_low if (swing_low and swing_low < entry) else entry - atr_dist)
+        sl = min(sl, entry - atr_dist) if swing_low and fixed_stop_distance <= 0 else sl
         risk = entry - sl
-        tp = entry + risk * rr
+        tp = entry + (fixed_take_profit_distance if fixed_take_profit_distance > 0 else risk * rr)
     else:  # SELL
-        sl = swing_high if (swing_high and swing_high > entry) else entry + atr_dist
-        sl = max(sl, entry + atr_dist) if swing_high else sl
+        sl = entry + stop_dist if fixed_stop_distance > 0 else (swing_high if (swing_high and swing_high > entry) else entry + atr_dist)
+        sl = max(sl, entry + atr_dist) if swing_high and fixed_stop_distance <= 0 else sl
         risk = sl - entry
-        tp = entry - risk * rr
+        tp = entry - (fixed_take_profit_distance if fixed_take_profit_distance > 0 else risk * rr)
 
     # Respect the broker's minimum stop distance and price precision. This
     # prevents otherwise-valid signals from being rejected as "invalid stops".
@@ -136,12 +167,12 @@ def build_trade_plan(
         if min_stop_distance > 0:
             sl = min(sl, entry - min_stop_distance)
         risk = entry - sl
-        tp = entry + risk * rr
+        tp = entry + (fixed_take_profit_distance if fixed_take_profit_distance > 0 else risk * rr)
     else:
         if min_stop_distance > 0:
             sl = max(sl, entry + min_stop_distance)
         risk = sl - entry
-        tp = entry - risk * rr
+        tp = entry - (fixed_take_profit_distance if fixed_take_profit_distance > 0 else risk * rr)
 
     digits = int(meta["digits"])
     sl = round(sl, digits)

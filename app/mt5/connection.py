@@ -6,6 +6,7 @@ the project still loads. Run live trading on a Windows VPS / Windows VM.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import platform
 from typing import Any
 
@@ -180,6 +181,60 @@ class MT5Connection:
             logger.error("symbol_info({}) returned None: {}", symbol, mt5.last_error())
             return None
         return info._asdict()
+
+    def list_markets(
+        self,
+        only_open: bool = True,
+        search: str | None = None,
+        limit: int = 500,
+        max_tick_age_minutes: int = 180,
+    ) -> list[dict[str, Any]]:
+        """Return broker symbols with a best-effort open/tradable status."""
+        if not self.ensure_connected():
+            return []
+        symbols = mt5.symbols_get() or []
+        query = (search or "").strip().lower()
+        now = datetime.now(timezone.utc)
+        rows: list[dict[str, Any]] = []
+        for symbol in symbols:
+            info = symbol._asdict()
+            name = str(info.get("name") or "")
+            if query:
+                haystack = " ".join(str(info.get(key) or "") for key in ("name", "path", "description")).lower()
+                if query not in haystack:
+                    continue
+            tick = mt5.symbol_info_tick(name)
+            tick_data = tick._asdict() if tick is not None else {}
+            trade_mode = int(info.get("trade_mode") or 0)
+            bid = float(tick_data.get("bid") or 0.0)
+            ask = float(tick_data.get("ask") or 0.0)
+            tick_time = tick_data.get("time")
+            tick_age_minutes = None
+            if tick_time:
+                tick_age_minutes = max(0.0, (now - datetime.fromtimestamp(int(tick_time), tz=timezone.utc)).total_seconds() / 60)
+            tick_active = bid > 0 and ask > 0 and (tick_age_minutes is None or tick_age_minutes <= max_tick_age_minutes)
+            is_open = trade_mode != 0 and tick_active
+            if only_open and not is_open:
+                continue
+            rows.append({
+                "symbol": name,
+                "description": info.get("description"),
+                "path": info.get("path"),
+                "visible": bool(info.get("visible")),
+                "trade_mode": trade_mode,
+                "trade_mode_label": "disabled" if trade_mode == 0 else "tradable",
+                "is_open": is_open,
+                "bid": bid or None,
+                "ask": ask or None,
+                "spread": info.get("spread"),
+                "digits": info.get("digits"),
+                "tick_time": datetime.fromtimestamp(int(tick_time), tz=timezone.utc).isoformat() if tick_time else None,
+                "tick_age_minutes": round(tick_age_minutes, 1) if tick_age_minutes is not None else None,
+            })
+            if len(rows) >= max(1, limit):
+                break
+        rows.sort(key=lambda row: (not bool(row["is_open"]), str(row["symbol"])))
+        return rows
 
     def get_spread_points(self, symbol: str | None = None) -> float | None:
         """Current spread in points (None on failure)."""

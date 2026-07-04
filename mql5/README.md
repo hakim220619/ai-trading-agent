@@ -114,7 +114,8 @@ Exit **dikelola per-basket**, bukan per-posisi (order tidak memasang SL/TP sendi
 | `InpUseTimeFilter` | false | Aktifkan filter jam (server time). |
 | `InpStartHour` / `InpEndHour` | 0 / 24 | Rentang jam entry. |
 | `InpTradeMonday` / `InpTradeFriday` | true | Izin trading Senin/Jumat. |
-| `InpFridayForceClose` | true | Tutup semua sebelum weekend. |
+| `InpTradeWeekend` | false | Trading Sabtu & Minggu. **Set `true` untuk crypto (24/7).** |
+| `InpFridayForceClose` | true | Tutup semua sebelum weekend (forex/gold). Set `false` untuk crypto. |
 | `InpFridayCloseHour` | 22 | Jam tutup paksa Jumat. |
 
 ### BATAS HARIAN
@@ -163,6 +164,40 @@ InpUseDailyLimit   = true
 InpDailyProfitStop = 30
 InpDailyLossStop   = 30
 ```
+
+### Crypto (mis. BTCUSD) — trading 24/7
+```
+InpTradeWeekend    = true      # WAJIB agar jalan Sabtu/Minggu
+InpFridayForceClose= false     # jangan tutup paksa weekend
+InpStepMode        = STEP_ATR  # spacing adaptif ke volatilitas crypto
+InpFixedLot        = 0.01
+InpMaxPositions    = 4
+InpTargetMode      = TGT_PERCENT
+InpTargetPercent   = 0.5
+InpUseBasketSL     = true
+InpSLMode          = SL_PERCENT
+InpBasketSLPercent = 4.0
+InpMaxSpreadPoints = 0          # 0 = nonaktifkan filter spread (crypto spread besar)
+```
+
+---
+
+## 🌐 Jalan di Semua Market & Semua Hari
+
+EA ini **market-agnostic** — tidak ada simbol yang di-hardcode. Aman di XAUUSD,
+forex, indeks, maupun crypto. Yang perlu disesuaikan per market:
+
+| Market | `InpTradeWeekend` | `InpFridayForceClose` | `InpMaxSpreadPoints` |
+|--------|-------------------|-----------------------|----------------------|
+| XAUUSD / Forex | `false` | `true` | 300 |
+| Indeks / Saham | `false` | `true` | sesuai broker |
+| **Crypto (24/7)** | **`true`** | **`false`** | 0 (atau besar) |
+
+Karena spacing pakai **ATR** dan lot/target berbasis **uang/% balance**, EA otomatis
+menyesuaikan skala harga tiap market tanpa ganti kode.
+
+> Untuk multi-market **bersamaan**, attach EA ke beberapa chart berbeda dan beri
+> **`InpMagic` berbeda** tiap chart agar basket tidak tercampur.
 
 ---
 

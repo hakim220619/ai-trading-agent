@@ -92,7 +92,8 @@ input int      InpStartHour        = 0;            // Jam mulai trading (0-23)
 input int      InpEndHour          = 24;           // Jam berhenti entry (0-24)
 input bool     InpTradeMonday      = true;         // Trading hari Senin
 input bool     InpTradeFriday      = true;         // Trading hari Jumat
-input bool     InpFridayForceClose = true;         // Tutup semua sebelum weekend
+input bool     InpTradeWeekend     = false;        // Trading Sabtu & Minggu (crypto = true)
+input bool     InpFridayForceClose = true;         // Tutup semua sebelum weekend (forex/gold)
 input int      InpFridayCloseHour  = 22;           // Jam tutup paksa hari Jumat
 
 //--- Batas Harian ---------------------------------------------------
@@ -540,7 +541,8 @@ bool WeekdayAllowed()
    MqlDateTime t; TimeToStruct(TimeCurrent(), t);
    if(t.day_of_week==1 && !InpTradeMonday) return false;
    if(t.day_of_week==5 && !InpTradeFriday) return false;
-   if(t.day_of_week==0 || t.day_of_week==6) return false; // Minggu/Sabtu
+   // Sabtu (6) & Minggu (0): hanya jika InpTradeWeekend aktif (mis. crypto)
+   if((t.day_of_week==0 || t.day_of_week==6) && !InpTradeWeekend) return false;
    return true;
 }
 

@@ -10,6 +10,11 @@ class StatusResponse(BaseModel):
     running: bool
     trading_enabled: bool
     mt5_connected: bool
+    broker_connected: bool = False
+    connection_stable: bool = False
+    ping_ms: float | None = None
+    ping_jitter_ms: float | None = None
+    tick_age_seconds: float | None = None
     symbol: str
     timeframes: list[str]
     open_positions: int
@@ -136,6 +141,7 @@ class TradingSetupRequest(BaseModel):
 
 
 class ScalpingSetupRequest(BaseModel):
+    symbol: Literal["BTCUSD", "XAUUSD"]
     confidence_threshold: float = Field(ge=0.50, le=0.99)
     base_lot: float = Field(ge=0.01, le=100.0)
     second_lot: float = Field(ge=0.01, le=100.0)

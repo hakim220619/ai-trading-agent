@@ -25,6 +25,12 @@ class OrderResult:
 
 
 def _validate_market_open(symbol: str) -> tuple[bool, str]:
+    health = connection.connection_health(symbol)
+    if not health["broker_connected"]:
+        return False, "MT5 terminal is not connected to broker"
+    tick_age = health.get("tick_age_seconds")
+    if tick_age is None or float(tick_age) > 10:
+        return False, f"market tick is stale ({tick_age}s)"
     info = connection.symbol_info(symbol)
     if info is None:
         return False, "symbol info unavailable"

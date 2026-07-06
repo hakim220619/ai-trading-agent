@@ -102,6 +102,41 @@ class RecoveryM1StrategyTests(unittest.TestCase):
             allow_duplicate=True, enforce_position_limit=False,
         )
 
+    def test_btc_minimum_lot_is_effective_base_for_multiplier(self):
+        setup = {
+            "base_lot": 0.01,
+            "second_lot": 0.03,
+            "lot_multiplier": 2.0,
+        }
+        self.assertEqual(RecoveryM1Strategy._lot_for_step(1, setup, 0.05), 0.05)
+        self.assertEqual(RecoveryM1Strategy._lot_for_step(2, setup, 0.05), 0.10)
+        self.assertEqual(RecoveryM1Strategy._lot_for_step(3, setup, 0.05), 0.20)
+
+    def test_explicit_larger_second_lot_is_preserved(self):
+        setup = {
+            "base_lot": 0.01,
+            "second_lot": 0.03,
+            "lot_multiplier": 2.0,
+        }
+        self.assertEqual(RecoveryM1Strategy._lot_for_step(2, setup, 0.01), 0.03)
+        self.assertEqual(RecoveryM1Strategy._lot_for_step(3, setup, 0.01), 0.06)
+
+    def test_network_failed_counter_retries_even_after_loss_recovers(self):
+        strategy = RecoveryM1Strategy()
+        losing = [{"ticket": 10, "comment": "m1rec-1-buy", "type_str": "BUY", "profit": -3.0}]
+        recovered = [{"ticket": 10, "comment": "m1rec-1-buy", "type_str": "BUY", "profit": -1.0}]
+        with patch("app.strategy.recovery_m1_strategy.get_open_positions", side_effect=[losing, recovered]), \
+             patch("app.strategy.recovery_m1_strategy.order_executor.configured_minimum_lot", return_value=0.01), \
+             patch("app.strategy.recovery_m1_strategy.order_executor.open_sell", side_effect=[
+                 _Result(False, "retcode=10031 absence of network connection"), _Result(True, "ok")
+             ]) as sell:
+            failed = strategy.tick("XAUUSD")
+            retried = strategy.tick("XAUUSD")
+        self.assertFalse(failed["ok"])
+        self.assertTrue(retried["ok"])
+        self.assertEqual(retried["step"], 2)
+        self.assertEqual(sell.call_count, 2)
+
     def test_profit_below_half_dollar_stays_open(self):
         strategy = RecoveryM1Strategy()
         winning = [{"ticket": 11, "comment": "m1rec-3-sell", "type_str": "SELL", "profit": 0.01}]

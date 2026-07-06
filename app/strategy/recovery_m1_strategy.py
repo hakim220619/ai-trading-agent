@@ -25,21 +25,25 @@ class RecoveryM1Strategy:
         self._cycle_keys: dict[str, str] = {}
         self._confidences: dict[str, float] = {}
         self._pending_open_until: dict[str, float] = {}
+        self._network_retries: dict[str, tuple[int, str]] = {}
 
     def reset(self, symbol: str) -> None:
         self._steps[symbol] = 1
         self._directions[symbol] = "BUY"
         self._cycle_keys.pop(symbol, None)
         self._confidences.pop(symbol, None)
+        self._network_retries.pop(symbol, None)
+        self._pending_open_until.pop(symbol, None)
 
     def status(self, symbol: str) -> dict[str, Any]:
         step = self._steps.get(symbol, 1)
-        setup = get_scalping_setup()
-        next_lot = self._lot_for_step(step, setup)
+        setup = get_scalping_setup(symbol)
+        minimum_lot = order_executor.configured_minimum_lot(symbol)
+        next_lot = self._lot_for_step(step, setup, minimum_lot)
         lots: list[float] = []
         losses: list[float] = []
         for candidate_step in range(1, 21):
-            candidate_lot = self._lot_for_step(candidate_step, setup)
+            candidate_lot = self._lot_for_step(candidate_step, setup, minimum_lot)
             if candidate_lot > setup["max_lot"] + 1e-9:
                 break
             lots.append(candidate_lot)
@@ -72,6 +76,10 @@ class RecoveryM1Strategy:
                 return self._parse_comment(item.get("comment"))[0]  # type: ignore[index]
 
             position = max(positions, key=position_step)
+            observed_step = position_step(position)
+            expected_step = self._steps.get(symbol, observed_step)
+            if observed_step < expected_step and time.monotonic() < self._pending_open_until.get(symbol, 0.0):
+                return {"action": "WAIT_ORDER_SYNC", "ok": True, "step": expected_step, "message": "menunggu posisi baru tersinkron dari broker"}
             step = position_step(position)
             direction = str(position.get("type_str", "SELL")).upper()
             self._steps[symbol] = step
@@ -83,9 +91,14 @@ class RecoveryM1Strategy:
             profit = float(position.get("profit", 0.0) or 0.0)
             basket_profit = sum(float(item.get("profit", 0.0) or 0.0) for item in positions)
 
-            setup = get_scalping_setup()
+            setup = get_scalping_setup(symbol)
             if basket_profit > setup["basket_profit_target"]:
                 return self._close_basket(positions, symbol, basket_profit)
+
+            retry = self._network_retries.get(symbol)
+            if retry and retry[0] > observed_step:
+                self._steps[symbol], self._directions[symbol] = retry
+                return self._open(symbol)
 
             loss_limit = self._loss_for_step(step, setup)
             if profit <= -loss_limit:
@@ -100,6 +113,10 @@ class RecoveryM1Strategy:
         # No recovery positions means the previous basket is completely gone
         # (including when closed manually from MT5/dashboard). Always discard
         # the old step so the next cycle starts from the configured base lot.
+        retry = self._network_retries.get(symbol)
+        if retry:
+            self._steps[symbol], self._directions[symbol] = retry
+            return self._open(symbol)
         self.reset(symbol)
         if time.monotonic() < self._pending_open_until.get(symbol, 0.0):
             return {"action": "WAIT_ORDER_SYNC", "ok": True, "message": "menunggu posisi baru tersinkron dari broker"}
@@ -126,8 +143,8 @@ class RecoveryM1Strategy:
     def _open(self, symbol: str) -> dict[str, Any]:
         step = self._steps.get(symbol, 1)
         direction = self._directions.get(symbol, "BUY")
-        setup = get_scalping_setup()
-        lot = self._lot_for_step(step, setup)
+        setup = get_scalping_setup(symbol)
+        lot = self._lot_for_step(step, setup, order_executor.configured_minimum_lot(symbol))
         loss_limit = self._loss_for_step(step, setup)
         if lot > setup["max_lot"] + 1e-9:
             return {
@@ -146,11 +163,22 @@ class RecoveryM1Strategy:
         )
         logger.info("Recovery M1 {} step={} direction={} lot={} limit=${} -> {}", symbol, step, direction, lot, loss_limit, result.message)
         if result.ok:
-            self._pending_open_until[symbol] = time.monotonic() + 15.0
+            self._network_retries.pop(symbol, None)
+            self._pending_open_until[symbol] = time.monotonic() + 5.0
+        elif self._is_network_error(result.message):
+            self._network_retries[symbol] = (step, direction)
         return {
             "action": f"OPEN_{direction}", "step": step, "loss_limit_money": loss_limit,
             "lot": lot, "cycle_key": key.upper(), "confidence_pct": round(confidence * 100, 2), **result.to_dict(),
         }
+
+    @staticmethod
+    def _is_network_error(message: str) -> bool:
+        text = message.lower()
+        return any(marker in text for marker in (
+            "network connection", "not connected", "no tick", "connection unstable",
+            "terminal is not connected", "order_send none", "order_check none",
+        ))
 
     @staticmethod
     def _parse_comment(comment: object) -> tuple[int, str, str | None, float] | None:
@@ -170,11 +198,22 @@ class RecoveryM1Strategy:
         return None
 
     @staticmethod
-    def _lot_for_step(step: int, setup: dict[str, float]) -> float:
+    def _lot_for_step(step: int, setup: dict[str, float], minimum_lot: float = 0.01) -> float:
+        """Return a recovery lot whose growth starts at the tradable base lot.
+
+        A configured lot below the instrument minimum is not a real first lot.
+        Using it directly made BTCUSD step 1 (0.01) and step 2 (0.03) both get
+        normalized to 0.05 by the executor.  Treat the market minimum as the
+        effective base and guarantee that step 2 grows by at least the configured
+        multiplier.  An explicitly larger second_lot remains supported.
+        """
+        base_lot = max(float(setup["base_lot"]), float(minimum_lot))
         if step <= 1:
-            lot = setup["base_lot"]
+            lot = base_lot
         else:
-            lot = setup["second_lot"] * (setup["lot_multiplier"] ** (step - 2))
+            multiplier = float(setup["lot_multiplier"])
+            second_lot = max(float(setup["second_lot"]), base_lot * multiplier)
+            lot = second_lot * (multiplier ** (step - 2))
         return round(lot, 2)
 
     @staticmethod

@@ -66,23 +66,39 @@ def _load_setup() -> dict[str, float | int | bool | str]:
 _SETUP = _load_setup()
 
 
-def _load_scalping_setup() -> dict[str, float | bool]:
+def _normalize_scalping_symbol(symbol: str) -> str:
+    upper = symbol.upper()
+    if "BTCUSD" in upper:
+        return "BTCUSD"
+    if "XAUUSD" in upper or "GOLD" in upper:
+        return "XAUUSD"
+    raise ValueError("konfigurasi scalping hanya tersedia untuk BTCUSD atau XAUUSD")
+
+
+def _load_scalping_setups() -> dict[str, dict[str, float | bool]]:
     try:
         saved = json.loads(_PATH.read_text(encoding="utf-8")).get("scalping_setup", {})
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         saved = {}
-    loaded = _SCALPING_DEFAULTS.copy()
-    for key, default in _SCALPING_DEFAULTS.items():
-        if key in saved:
-            loaded[key] = bool(saved[key]) if isinstance(default, bool) else float(saved[key])
-    return loaded
+    # Migrate the former shared flat profile by copying it to both instruments.
+    legacy = saved if isinstance(saved, dict) and "base_lot" in saved else {}
+    result: dict[str, dict[str, float | bool]] = {}
+    for symbol in _DEFAULTS:
+        source = saved.get(symbol, legacy) if isinstance(saved, dict) else {}
+        loaded = _SCALPING_DEFAULTS.copy()
+        if isinstance(source, dict):
+            for key, default in _SCALPING_DEFAULTS.items():
+                if key in source:
+                    loaded[key] = bool(source[key]) if isinstance(default, bool) else float(source[key])
+        result[symbol] = loaded
+    return result
 
 
-_SCALPING_SETUP = _load_scalping_setup()
+_SCALPING_SETUPS = _load_scalping_setups()
 
 
 def _payload() -> dict:
-    return {**_CONFIG, "trading_setup": _SETUP, "scalping_setup": _SCALPING_SETUP}
+    return {**_CONFIG, "trading_setup": _SETUP, "scalping_setup": _SCALPING_SETUPS}
 
 
 def _persist() -> None:
@@ -107,12 +123,18 @@ def get_trading_setup() -> dict[str, float | int | bool | str]:
         return _SETUP.copy()
 
 
-def get_scalping_setup() -> dict[str, float | bool]:
+def get_scalping_setup(symbol: str = "BTCUSD") -> dict[str, float | bool]:
     with _LOCK:
-        return _SCALPING_SETUP.copy()
+        return _SCALPING_SETUPS[_normalize_scalping_symbol(symbol)].copy()
 
 
-def save_scalping_setup(values: dict) -> dict[str, float | bool]:
+def get_all_scalping_setups() -> dict[str, dict[str, float | bool]]:
+    with _LOCK:
+        return {symbol: values.copy() for symbol, values in _SCALPING_SETUPS.items()}
+
+
+def save_scalping_setup(symbol: str, values: dict) -> dict[str, float | bool]:
+    symbol = _normalize_scalping_symbol(symbol)
     normalized = {
         "confidence_threshold": min(0.99, max(0.50, float(values["confidence_threshold"]))),
         "base_lot": max(0.01, float(values["base_lot"])),
@@ -126,9 +148,9 @@ def save_scalping_setup(values: dict) -> dict[str, float | bool]:
         "daily_profit_target_enabled": bool(values["daily_profit_target_enabled"]),
     }
     with _LOCK:
-        _SCALPING_SETUP.update(normalized)
+        _SCALPING_SETUPS[symbol].update(normalized)
         _persist()
-        return _SCALPING_SETUP.copy()
+        return _SCALPING_SETUPS[symbol].copy()
 
 
 def save_trading_setup(values: dict) -> dict[str, float | int | bool | str]:

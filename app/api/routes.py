@@ -33,7 +33,7 @@ from app.mt5.daily_limits import daily_summary
 from app.mt5.confidence_metadata import confidence_comment
 from app.mt5.market_data import get_candles
 from app.ml.predict import get_model
-from app.runtime_config import get_all_symbol_risk, get_scalping_setup, get_trading_setup, save_scalping_setup, save_symbol_risk, save_trading_setup
+from app.runtime_config import get_all_scalping_setups, get_all_symbol_risk, get_scalping_setup, get_trading_setup, save_scalping_setup, save_symbol_risk, save_trading_setup
 from app.strategy import support_resistance as sr
 from app.utils.logger import logger
 
@@ -102,10 +102,16 @@ def status() -> StatusResponse:
         "account_trade_allowed": False,
         "trade_api_disabled": True,
     }
+    health = connection.connection_health(settings.symbol) if connected else {}
     return StatusResponse(
         running=bot.running,
         trading_enabled=settings.trading_enabled,
         mt5_connected=connected,
+        broker_connected=bool(health.get("broker_connected", False)),
+        connection_stable=bool(health.get("stable", False)),
+        ping_ms=health.get("ping_ms"),
+        ping_jitter_ms=health.get("jitter_ms"),
+        tick_age_seconds=health.get("tick_age_seconds"),
         symbol=settings.symbol,
         timeframes=settings.timeframes,
         open_positions=len(positions),
@@ -278,14 +284,21 @@ def update_trading_setup(req: TradingSetupRequest) -> ActionResponse:
 
 
 @router.get("/scalping-setup", tags=["monitor"])
-def scalping_setup() -> dict[str, float | bool]:
-    return get_scalping_setup()
+def scalping_setup(symbol: str | None = None) -> dict:
+    if symbol is None:
+        return {"symbols": get_all_scalping_setups()}
+    try:
+        return get_scalping_setup(symbol)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/scalping-setup", response_model=ActionResponse, tags=["control"])
 def update_scalping_setup(req: ScalpingSetupRequest) -> ActionResponse:
-    values = save_scalping_setup(req.model_dump())
-    return ActionResponse(ok=True, message="konfigurasi Counter Scalping M1 tersimpan", detail=values)
+    payload = req.model_dump()
+    symbol = payload.pop("symbol")
+    values = save_scalping_setup(symbol, payload)
+    return ActionResponse(ok=True, message=f"konfigurasi Counter Scalping M1 {symbol} tersimpan", detail={"symbol": symbol, **values})
 
 
 @router.get("/account", response_model=AccountResponse, tags=["monitor"])

@@ -124,7 +124,6 @@ class TradingBot:
 
     # --- main loop ---------------------------------------------------------
     def _run_loop(self) -> None:
-        poll = 5  # seconds between checks for a new bar
         while not self._stop_event.is_set():
             try:
                 if self.confidence_auto:
@@ -134,6 +133,9 @@ class TradingBot:
                     self.tick(settings.symbol)
             except Exception as exc:  # never let the loop die
                 logger.exception("Error in bot loop: {}", exc)
+            # Recovery counters depend on live floating P/L, so check them every
+            # second. Candle-based strategies keep the lighter five-second poll.
+            poll = 1 if self.confidence_auto and self.active_strategy == "recovery_m1" else 5
             self._stop_event.wait(poll)
 
     def _new_bar(self, df: pd.DataFrame, symbol: str) -> bool:
@@ -161,7 +163,7 @@ class TradingBot:
             initial_direction = None
             has_recovery_positions = self.recovery_m1.has_active_positions(symbol)
             if not has_recovery_positions:
-                scalping_setup = get_scalping_setup()
+                scalping_setup = get_scalping_setup(symbol)
                 daily_target_enabled = bool(scalping_setup["daily_profit_target_enabled"])
                 daily_target = float(scalping_setup["daily_profit_target"])
                 daily = daily_summary(bot_only=True)

@@ -7,6 +7,7 @@ the project still loads. Run live trading on a Windows VPS / Windows VM.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from collections import deque
 import platform
 from typing import Any
 
@@ -55,6 +56,7 @@ class MT5Connection:
     def __init__(self) -> None:
         self._connected: bool = False
         self._user_logged_out: bool = False
+        self._ping_samples: deque[float] = deque(maxlen=20)
 
     @property
     def available(self) -> bool:
@@ -98,8 +100,14 @@ class MT5Connection:
                 mt5.shutdown()
                 return False
 
+        terminal = mt5.terminal_info()
+        if terminal is None or not bool(getattr(terminal, "connected", False)):
+            self._connected = False
+            logger.error("MT5 initialized but broker connection is offline: {}", mt5.last_error())
+            return False
         self._connected = True
-        info = self.account_info()
+        account = mt5.account_info()
+        info = account._asdict() if account is not None else None
         if info:
             logger.success(
                 "Connected to MT5. Account={} Server={} Balance={} {}",
@@ -116,11 +124,44 @@ class MT5Connection:
             return False
         if self._user_logged_out:
             return False
-        if self._connected and mt5.terminal_info() is not None:
+        terminal = mt5.terminal_info() if self._connected else None
+        if terminal is not None and bool(getattr(terminal, "connected", False)):
             return True
         logger.warning("MT5 session lost - attempting reconnect...")
         self._connected = False
         return self.connect()
+
+    def connection_health(self, symbol: str | None = None) -> dict[str, Any]:
+        """Return broker-link latency and fresh-price health for the dashboard."""
+        if not self.ensure_connected():
+            return {"broker_connected": False, "stable": False, "ping_ms": None, "tick_age_seconds": None}
+        terminal = mt5.terminal_info()
+        broker_connected = bool(terminal is not None and getattr(terminal, "connected", False))
+        ping_raw = float(getattr(terminal, "ping_last", 0.0) or 0.0) if terminal is not None else 0.0
+        ping_ms = ping_raw / 1000.0 if ping_raw > 0 else None  # MT5 exposes microseconds
+        if ping_ms is not None:
+            self._ping_samples.append(ping_ms)
+
+        selected = symbol or settings.symbol
+        tick = mt5.symbol_info_tick(selected) if broker_connected else None
+        tick_time_msc = float(getattr(tick, "time_msc", 0.0) or 0.0) if tick is not None else 0.0
+        tick_age = max(0.0, datetime.now(timezone.utc).timestamp() - tick_time_msc / 1000.0) if tick_time_msc else None
+        samples = list(self._ping_samples)
+        jitter_ms = max(samples) - min(samples) if len(samples) >= 2 else 0.0
+        stable = bool(
+            broker_connected
+            and ping_ms is not None and ping_ms <= 500
+            and jitter_ms <= 250
+            and tick_age is not None and tick_age <= 10
+        )
+        return {
+            "broker_connected": broker_connected,
+            "stable": stable,
+            "ping_ms": round(ping_ms, 1) if ping_ms is not None else None,
+            "jitter_ms": round(jitter_ms, 1),
+            "tick_age_seconds": round(tick_age, 1) if tick_age is not None else None,
+            "samples": len(samples),
+        }
 
     def disconnect(self) -> None:
         """Shut down the MT5 terminal session."""

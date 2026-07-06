@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sys
+import os
 from pathlib import Path
 
 from loguru import logger
@@ -9,7 +10,7 @@ from loguru import logger
 _CONFIGURED = False
 
 
-def setup_logger(level: str = "INFO", log_dir: str = "logs") -> "logger.__class__":
+def setup_logger(level: str = "INFO", log_dir: str | None = None) -> "logger.__class__":
     """Configure the global loguru logger once.
 
     Logs to stderr (colorised) and to a rotating file under ``log_dir``.
@@ -33,6 +34,7 @@ def setup_logger(level: str = "INFO", log_dir: str = "logs") -> "logger.__class_
         ),
     )
 
+    log_dir = log_dir or os.getenv("LOG_DIR", "logs")
     Path(log_dir).mkdir(parents=True, exist_ok=True)
     logger.add(
         Path(log_dir) / "trading_{time:YYYY-MM-DD}.log",

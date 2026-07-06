@@ -6,6 +6,10 @@ rule-based strategy with an **XGBoost** machine-learning model, and manages risk
 orders and positions automatically. It ships with **backtesting**, a **training
 pipeline**, and a lightweight **FastAPI dashboard**.
 
+### Multiple MT5 accounts
+
+The dashboard can run additional accounts through isolated local worker processes. Use the account selector in the top navigation and the **Add account** button. Every additional account must point to a separate MT5 installation (`terminal64.exe`); the MetaTrader5 Python API cannot safely hold multiple terminal sessions in one process. Saved account profiles are restored automatically after an application restart. Passwords are protected with Windows DPAPI and can only be decrypted by the same Windows user. Each worker has separate runtime configuration and logs under `logs/accounts/<account_id>/`.
+
 > ⚠️ **Trading is risky.** This software can lose money. It defaults to a **SAFE
 > mode** (`TRADING_ENABLED=false`) that computes and logs signals but never sends
 > a live order. Read the [Risk Disclaimer](#-risk-disclaimer) before going live.

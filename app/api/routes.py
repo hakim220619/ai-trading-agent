@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import os
+import re
+from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -36,6 +38,7 @@ from app.ml.predict import get_model
 from app.runtime_config import get_all_scalping_setups, get_all_symbol_risk, get_scalping_setup, get_trading_setup, save_scalping_setup, save_symbol_risk, save_trading_setup
 from app.strategy import support_resistance as sr
 from app.utils.logger import logger
+from app.account_manager import account_manager, is_account_worker
 
 router = APIRouter()
 
@@ -64,7 +67,7 @@ def strategies() -> dict:
         "active_timeframe": "M1" if setup["active_strategy"] == "recovery_m1" else "M5",
         "confidence_auto": _get_bot().confidence_auto,
         "choices": [
-            {"id": "confidence_m5", "name": "Confidence M5", "detail": "Strategi lama: XGBoost + technical/MTF dan pengaturan risiko yang ada."},
+            {"id": "confidence_m5", "name": "Confidence M5", "detail": "Ensemble XGBoost + LightGBM dengan technical/MTF dan pengaturan risiko yang ada."},
             {"id": "recovery_m1", "name": "Counter Basket Scalping M1", "detail": "Entry awal mengikuti confidence M1; lot 0.01 dengan batas loss $3, lalu counter 0.03 dan lot berikutnya ×2: 0.06, 0.12, 0.24, ..."},
         ],
         "live": ([
@@ -73,7 +76,7 @@ def strategies() -> dict:
         ] if setup["active_strategy"] == "recovery_m1" else [
             {"name": "Technical Trend", "detail": "EMA20/EMA50/EMA200 + RSI"},
             {"name": "Support & Resistance", "detail": "Swing, breakout, retest, BOS, dan CHoCH"},
-            {"name": "XGBoost Confidence", "detail": f"BUY/SELL langsung dari probabilitas terbesar jika confidence >= {float(setup['confidence_threshold']):.0%}; tanpa konfirmasi teknis/MTF/spread"},
+            {"name": "Ensemble ML Confidence", "detail": f"Probabilitas gabungan XGBoost + LightGBM; BUY/SELL jika confidence >= {float(setup['confidence_threshold']):.0%}."},
             {"name": "Multi-Timeframe", "detail": "Konfirmasi konteks M15 dan H1"},
             {"name": "Risk & Execution", "detail": "ATR SL/TP adaptif, maksimal 3 posisi, trailing SL mengunci profit setiap kenaikan $1"},
         ]),
@@ -307,8 +310,36 @@ def account() -> AccountResponse:
     return AccountResponse(connected=info is not None, info=info)
 
 
+@router.get("/accounts", tags=["monitor"])
+def accounts() -> dict:
+    """List the primary account and isolated account workers."""
+    return {"accounts": account_manager.list() if not is_account_worker() else []}
+
+
+@router.delete("/accounts/{account_id}", response_model=ActionResponse, tags=["control"])
+def remove_account(account_id: str) -> ActionResponse:
+    if account_id == "default":
+        return ActionResponse(ok=False, message="akun utama tidak dapat dihapus")
+    removed = account_manager.remove(account_id)
+    return ActionResponse(ok=removed, message="worker akun dihentikan" if removed else "akun tidak ditemukan")
+
+
 @router.post("/account/login", response_model=ActionResponse, tags=["control"])
 def account_login(req: MT5LoginRequest) -> ActionResponse:
+    if not is_account_worker() and req.account_id and req.account_id != "default":
+        try:
+            password = req.password or account_manager.saved_password(req.account_id)
+            if not password:
+                return ActionResponse(ok=False, message="password wajib diisi atau pilih akun dengan password tersimpan")
+            worker = account_manager.add(
+                req.account_id, req.label or req.account_id, req.login, password,
+                req.server.strip(), req.terminal_path or "",
+            )
+            return ActionResponse(ok=True, message=f"akun {worker.label} berhasil ditambahkan", detail={"account_id": worker.account_id})
+        except (ValueError, RuntimeError) as exc:
+            return ActionResponse(ok=False, message=str(exc))
+    if not req.password:
+        return ActionResponse(ok=False, message="password akun utama wajib diisi")
     ok, message = connection.login(req.login, req.password, req.server.strip())
     return ActionResponse(ok=ok, message=message)
 
@@ -333,13 +364,17 @@ def positions(all_account: bool = True) -> PositionsResponse:
 
 
 @router.get("/trade-history", response_model=TradeHistoryResponse, tags=["monitor"])
-def trade_history(days: int = 30, limit: int = 100, all_account: bool = True, result: str = "all") -> TradeHistoryResponse:
+def trade_history(days: int = 30, limit: int = 100, all_account: bool = True, result: str = "all", date_from: date | None = None, date_to: date | None = None, tz_offset: int = 0, symbol: str | None = None) -> TradeHistoryResponse:
     from app.mt5.trade_history import get_closed_deals, summarize_closed_deals
 
     days = max(1, min(days, 3650))
     limit = max(1, min(limit, 1000))
     result = result.lower()
-    all_deals = get_closed_deals(days=days, limit=None, bot_only=not all_account)
+    offset = max(-840, min(tz_offset, 840))
+    start = datetime.combine(date_from, time.min, tzinfo=timezone.utc) + timedelta(minutes=offset) if date_from else None
+    end = datetime.combine(date_to + timedelta(days=1), time.min, tzinfo=timezone.utc) + timedelta(minutes=offset) if date_to else None
+    selected_symbol = symbol.strip().upper() if symbol and symbol.strip() else None
+    all_deals = get_closed_deals(days=days, limit=None, bot_only=not all_account, date_from=start, date_to=end, symbol=selected_symbol)
     if result in {"win", "loss", "be"}:
         all_deals = [deal for deal in all_deals if str(deal.get("result", "")).lower() == result]
     all_deals.sort(key=lambda deal: (str(deal.get("time", "")), int(deal.get("ticket", 0))), reverse=True)
@@ -351,14 +386,18 @@ def trade_history(days: int = 30, limit: int = 100, all_account: bool = True, re
 
 
 @router.get("/trade-hour-analysis", tags=["monitor"])
-def trade_hour_analysis(days: int = 3650, tz_offset: int = 0, all_account: bool = True, result: str = "all") -> dict:
+def trade_hour_analysis(days: int = 3650, tz_offset: int = 0, all_account: bool = True, result: str = "all", date_from: date | None = None, date_to: date | None = None, symbol: str | None = None) -> dict:
     from app.mt5.trade_history import get_closed_deals, summarize_by_open_hour
 
-    deals = get_closed_deals(days=max(1, min(days, 3650)), limit=None, bot_only=not all_account)
+    offset = max(-840, min(tz_offset, 840))
+    start = datetime.combine(date_from, time.min, tzinfo=timezone.utc) + timedelta(minutes=offset) if date_from else None
+    end = datetime.combine(date_to + timedelta(days=1), time.min, tzinfo=timezone.utc) + timedelta(minutes=offset) if date_to else None
+    selected_symbol = symbol.strip().upper() if symbol and symbol.strip() else None
+    deals = get_closed_deals(days=max(1, min(days, 3650)), limit=None, bot_only=not all_account, date_from=start, date_to=end, symbol=selected_symbol)
     result = result.lower()
     if result in {"win", "loss", "be"}:
         deals = [deal for deal in deals if str(deal.get("result", "")).lower() == result]
-    return summarize_by_open_hour(deals, max(-840, min(tz_offset, 840)))
+    return summarize_by_open_hour(deals, offset)
 
 
 @router.get("/capital-curve", tags=["monitor"])
@@ -366,6 +405,33 @@ def capital_curve(days: int = 3650) -> dict:
     from app.mt5.trade_history import get_capital_curve
 
     return get_capital_curve(days=max(1, min(days, 3650)))
+
+
+@router.get("/activity-logs", tags=["monitor"])
+def activity_logs(limit: int = 300) -> dict:
+    """Return recent application events for the dashboard, newest first."""
+    limit = max(1, min(limit, 1000))
+    pattern = re.compile(
+        r"^(?P<time>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) \| "
+        r"(?P<level>\w+)\s*\| (?P<source>.*?) - (?P<message>.*)$"
+    )
+    rows: list[dict[str, str]] = []
+    files = sorted(Path(os.getenv("LOG_DIR", "logs")).glob("trading_*.log"), key=lambda path: path.stat().st_mtime, reverse=True)
+    for path in files:
+        try:
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        for line in reversed(lines):
+            match = pattern.match(line)
+            if not match:
+                continue
+            row = match.groupdict()
+            row["level"] = row["level"].strip().upper()
+            rows.append(row)
+            if len(rows) >= limit:
+                return {"count": len(rows), "logs": rows}
+    return {"count": len(rows), "logs": rows}
 
 
 @router.get("/signal", response_model=SignalResponse, tags=["monitor"])

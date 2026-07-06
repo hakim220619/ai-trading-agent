@@ -112,8 +112,11 @@ class BulkLevelRequest(BaseModel):
 
 class MT5LoginRequest(BaseModel):
     login: int = Field(gt=0)
-    password: str = Field(min_length=1)
+    password: str = ""
     server: str = Field(min_length=1)
+    account_id: str | None = Field(default=None, min_length=1, max_length=40, pattern=r"^[A-Za-z0-9_-]+$")
+    label: str | None = Field(default=None, max_length=80)
+    terminal_path: str | None = Field(default=None, max_length=500)
 
 
 class AutoMarketsRequest(BaseModel):

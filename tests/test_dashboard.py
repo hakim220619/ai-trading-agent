@@ -57,7 +57,10 @@ class DashboardTests(unittest.TestCase):
         self.assertIn("connection_stable", html)
         self.assertIn("Ping ${ping}", html)
         self.assertIn("setInterval(refreshStatusRealtime,1000)", html)
-        self.assertIn("Semua posisi MT5 pada seluruh simbol", html)
+        self.assertIn("Akun lain tidak terpengaruh", html)
+        self.assertIn('id="activeAccountBadge"', html)
+        self.assertIn("Semua aksi hanya diterapkan ke akun yang sedang dipilih", html)
+        self.assertIn("activeAccountLabel", html)
         self.assertIn('id="manualTradeModal"', html)
         self.assertIn("openManualTrade('BUY')", html)
         self.assertIn("executeManualTrade", html)
@@ -139,7 +142,10 @@ class DashboardTests(unittest.TestCase):
         self.assertIn('id="accountLoginModal"', html)
         self.assertIn("loginAccount", html)
         self.assertIn("logoutAccount", html)
-        self.assertIn("Password tidak disimpan", html)
+        self.assertIn("Password dienkripsi oleh Windows", html)
+        self.assertIn("Riwayat Akun Tersimpan", html)
+        self.assertIn("selectSavedAccount", html)
+        self.assertIn("Password tersimpan aman", html)
         self.assertIn('id="themeToggleBtn"', html)
         self.assertIn("cycleTheme", html)
         self.assertIn("dashboard-theme", html)
@@ -178,6 +184,11 @@ class DashboardTests(unittest.TestCase):
         self.assertIn("Counter Basket Scalping M1", html)
         self.assertIn("changeStrategy", html)
         self.assertIn("/trade/strategy/", html)
+
+    def test_auto_confidence_defaults_to_xauusd_only(self) -> None:
+        from app.main import TradingBot
+
+        self.assertEqual(TradingBot().auto_symbols, ["XAUUSD"])
 
 
 if __name__ == "__main__":

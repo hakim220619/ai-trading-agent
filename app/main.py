@@ -49,7 +49,7 @@ class TradingBot:
         self._last_bar_time: Any = None
         self.confidence_auto: bool = False
         self._last_auto_attempt_ts: float = 0.0
-        self.auto_symbols: list[str] = ["BTCUSD", "XAUUSD"]
+        self.auto_symbols: list[str] = ["XAUUSD"]
         self._last_bar_times: dict[str, Any] = {}
         self._last_signals: dict[str, Signal] = {}
         self._last_order_results: dict[str, dict[str, object]] = {}
@@ -439,19 +439,46 @@ bot = TradingBot()
 # --- FastAPI app assembly --------------------------------------------------
 def create_app():
     """Build the FastAPI application with routes attached."""
-    from fastapi import FastAPI
+    import asyncio
+    from urllib.parse import urlencode
+    from fastapi import FastAPI, Request
+    from fastapi.responses import Response
 
     from app.api.routes import router
+    from app.account_manager import account_manager, is_account_worker
 
     app = FastAPI(
         title="AI Trading Agent",
-        description="Forex/XAUUSD AI trading agent (MT5 + XGBoost). Default mode is SAFE.",
+        description="Forex/XAUUSD AI trading agent (MT5 + XGBoost/LightGBM ensemble). Default mode is SAFE.",
         version="1.0.0",
     )
     app.include_router(router)
 
+    if not is_account_worker():
+        @app.middleware("http")
+        async def route_account_worker(request: Request, call_next):
+            account_id = request.query_params.get("account_id", "default")
+            if account_id == "default" or request.url.path in {"/", "/accounts", "/account/login"}:
+                return await call_next(request)
+            worker = account_manager.get(account_id)
+            if worker is None:
+                return Response('{"detail":"akun tidak aktif"}', status_code=404, media_type="application/json")
+            query = urlencode([(key, value) for key, value in request.query_params.multi_items() if key != "account_id"])
+            path = request.url.path + (f"?{query}" if query else "")
+            body = await request.body()
+            headers = {"Content-Type": request.headers.get("content-type", "application/json"), "Accept": "application/json"}
+            try:
+                status, content, content_type = await asyncio.to_thread(
+                    account_manager.request, account_id, request.method, path, body or None, headers
+                )
+            except Exception as exc:
+                return Response(f'{{"detail":"worker akun gagal: {str(exc)}"}}', status_code=502, media_type="application/json")
+            return Response(content, status_code=status, media_type=content_type.split(";", 1)[0])
+
     @app.on_event("startup")
     def _auto_start_bot() -> None:
+        if not is_account_worker():
+            account_manager.restore()
         if settings.auto_start:
             bot.start()
 
@@ -460,6 +487,8 @@ def create_app():
         if bot.running:
             bot.stop()
         connection.disconnect()
+        if not is_account_worker():
+            account_manager.shutdown()
 
     return app
 

@@ -58,6 +58,8 @@ class Settings(BaseSettings):
     # --- ML ---
     ml_prob_threshold: float = Field(default=0.70)
     model_path: str = Field(default="app/ml/models/xgboost_model.json")
+    lightgbm_model_path: str = Field(default="app/ml/models/lightgbm_model.joblib")
+    xgboost_ensemble_weight: float = Field(default=0.5, ge=0.0, le=1.0)
 
     # --- Multi-timeframe confirmation ---
     mtf_confirmation: bool = Field(default=True)

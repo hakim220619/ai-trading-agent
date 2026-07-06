@@ -12,6 +12,8 @@ env/
 # Data / logs / models
 data/*.csv
 logs/*.log
+logs/accounts.json
+logs/accounts/
 app/ml/models/*.json
 app/ml/models/*.pkl
 

@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 from pathlib import Path
 
 
-_PATH = Path("logs/dashboard_config.json")
+_PATH = Path(os.getenv("DASHBOARD_CONFIG_PATH", "logs/dashboard_config.json"))
 _LOCK = threading.Lock()
 _DEFAULTS = {
     "BTCUSD": {"stop_loss_money": 0.0, "take_profit_money": 0.0},

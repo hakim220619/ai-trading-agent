@@ -82,23 +82,16 @@ class MT5Connection:
         init_kwargs: dict[str, Any] = {}
         if settings.mt5_path:
             init_kwargs["path"] = settings.mt5_path
+        if settings.mt5_login and settings.mt5_password and settings.mt5_server:
+            init_kwargs.update({
+                "login": int(settings.mt5_login),
+                "password": settings.mt5_password,
+                "server": settings.mt5_server,
+            })
 
         if not mt5.initialize(**init_kwargs):
             logger.error("mt5.initialize() failed: {}", mt5.last_error())
             return False
-
-        # Log in only if credentials were supplied; otherwise rely on the
-        # already-logged-in terminal session.
-        if settings.mt5_login and settings.mt5_password and settings.mt5_server:
-            authorized = mt5.login(
-                login=int(settings.mt5_login),
-                password=settings.mt5_password,
-                server=settings.mt5_server,
-            )
-            if not authorized:
-                logger.error("mt5.login() failed: {}", mt5.last_error())
-                mt5.shutdown()
-                return False
 
         terminal = mt5.terminal_info()
         if terminal is None or not bool(getattr(terminal, "connected", False)):
@@ -108,6 +101,12 @@ class MT5Connection:
         self._connected = True
         account = mt5.account_info()
         info = account._asdict() if account is not None else None
+        if settings.mt5_login and (not info or int(info.get("login") or 0) != int(settings.mt5_login)):
+            actual = info.get("login") if info else None
+            logger.error("MT5 account mismatch: requested={} active={}", settings.mt5_login, actual)
+            mt5.shutdown()
+            self._connected = False
+            return False
         if info:
             logger.success(
                 "Connected to MT5. Account={} Server={} Balance={} {}",
@@ -180,12 +179,15 @@ class MT5Connection:
         init_kwargs: dict[str, Any] = {}
         if settings.mt5_path:
             init_kwargs["path"] = settings.mt5_path
+        init_kwargs.update({"login": int(login), "password": password, "server": server})
         if not mt5.initialize(**init_kwargs):
             return False, f"mt5.initialize failed: {mt5.last_error()}"
-        if not mt5.login(login=int(login), password=password, server=server):
-            error = mt5.last_error()
+        info = mt5.account_info()
+        actual_login = int(getattr(info, "login", 0) or 0) if info is not None else 0
+        if actual_login != int(login):
+            error = f"akun aktif {actual_login or '-'}, seharusnya {login}"
             mt5.shutdown()
-            return False, f"mt5.login failed: {error}"
+            return False, f"verifikasi login MT5 gagal: {error}"
         self._user_logged_out = False
         self._connected = True
         return True, "login MT5 berhasil"

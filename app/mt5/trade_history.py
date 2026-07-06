@@ -14,12 +14,14 @@ def get_closed_deals(
     limit: int | None = 100,
     symbol: str | None = None,
     bot_only: bool = False,
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
 ) -> list[dict[str, Any]]:
     """Return closing deals, newest first, including their net realized P/L."""
     if not MT5_AVAILABLE or not connection.ensure_connected():
         return []
-    end = datetime.now(timezone.utc)
-    start = end - timedelta(days=max(1, days))
+    end = date_to or datetime.now(timezone.utc)
+    start = date_from or end - timedelta(days=max(1, days))
     deals = mt5.history_deals_get(start, end) or []
     exit_types = {mt5.DEAL_ENTRY_OUT, mt5.DEAL_ENTRY_OUT_BY}
     entry_types = {mt5.DEAL_ENTRY_IN}

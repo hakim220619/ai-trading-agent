@@ -169,7 +169,13 @@ class MT5Connection:
         self._connected = False
         logger.info("MT5 disconnected.")
 
-    def login(self, login: int, password: str, server: str) -> tuple[bool, str]:
+    def login(
+        self,
+        login: int,
+        password: str,
+        server: str,
+        terminal_path: str | None = None,
+    ) -> tuple[bool, str]:
         """Explicitly login from the dashboard without persisting credentials."""
         if not MT5_AVAILABLE:
             return False, "MetaTrader5 package unavailable"
@@ -177,8 +183,9 @@ class MT5Connection:
             mt5.shutdown()
             self._connected = False
         init_kwargs: dict[str, Any] = {}
-        if settings.mt5_path:
-            init_kwargs["path"] = settings.mt5_path
+        selected_path = (terminal_path or settings.mt5_path or "").strip()
+        if selected_path:
+            init_kwargs["path"] = selected_path
         init_kwargs.update({"login": int(login), "password": password, "server": server})
         if not mt5.initialize(**init_kwargs):
             return False, f"mt5.initialize failed: {mt5.last_error()}"

@@ -131,6 +131,10 @@ class AccountManager:
                 raise ValueError(f"account_id {account_id} sudah aktif")
             port = self._free_port()
             env = os.environ.copy()
+            # A new account starts with the primary account's strategy, while
+            # its own dashboard config remains isolated and can later diverge.
+            from app.runtime_config import get_trading_setup
+
             env.update({
                 "ACCOUNT_WORKER": "1",
                 "ACCOUNT_ID": account_id,
@@ -142,6 +146,7 @@ class AccountManager:
                 "AUTO_START": "false",
                 "LOG_DIR": f"logs/accounts/{account_id}",
                 "DASHBOARD_CONFIG_PATH": f"logs/accounts/{account_id}/dashboard_config.json",
+                "DEFAULT_ACTIVE_STRATEGY": str(get_trading_setup()["active_strategy"]),
             })
             process = subprocess.Popen(
                 [sys.executable, "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", str(port)],
@@ -154,13 +159,13 @@ class AccountManager:
             )
             worker = AccountWorker(account_id, label.strip() or account_id, login, server.strip(), terminal_path.strip(), port, process)
             self._workers[account_id] = worker
-        deadline = time.time() + 20
+        deadline = time.time() + 60
         observed_login: int | None = None
         while time.time() < deadline:
             if process.poll() is not None:
                 break
             try:
-                status, body, _ = self.request(account_id, "GET", "/account")
+                status, body, _ = self.request(account_id, "GET", "/account", timeout=2)
                 payload = json.loads(body)
                 if status == 200 and payload.get("connected"):
                     observed_login = int((payload.get("info") or {}).get("login") or 0)
@@ -174,7 +179,7 @@ class AccountManager:
                         )
                         self._save_profiles()
                     return worker
-            except (URLError, ConnectionError, KeyError):
+            except (URLError, ConnectionError, KeyError, TimeoutError):
                 time.sleep(0.25)
         self._stop_worker(account_id)
         if observed_login and observed_login != int(login):
@@ -205,13 +210,32 @@ class AccountManager:
 
     def restore(self) -> None:
         """Restart every saved account worker after the main application starts."""
+        # The optional second account in .env is authoritative at startup. It
+        # uses a separate terminal because the MT5 Python API has one terminal
+        # session per process.
+        from app.config import settings
+
+        env_password = ""
+        if all((settings.mt5_login_2, settings.mt5_password_2, settings.mt5_server_2, settings.mt5_path_2)):
+            env_password = str(settings.mt5_password_2)
+            previous = self._profiles.get("account-2")
+            self._profiles["account-2"] = AccountProfile(
+                account_id="account-2",
+                label=settings.mt5_label_2.strip() or "Akun Kedua",
+                login=int(settings.mt5_login_2),
+                server=str(settings.mt5_server_2).strip(),
+                terminal_path=str(settings.mt5_path_2).strip(),
+                protected_password=_protect_password(env_password) or (previous.protected_password if previous else ""),
+            )
+            self._save_profiles()
+
         for profile in list(self._profiles.values()):
             if self.get(profile.account_id):
                 continue
             try:
                 self.add(
                     profile.account_id, profile.label, profile.login,
-                    _unprotect_password(profile.protected_password), profile.server,
+                    env_password if profile.account_id == "account-2" and env_password else _unprotect_password(profile.protected_password), profile.server,
                     profile.terminal_path, persist=False,
                 )
             except (ValueError, RuntimeError):
@@ -241,13 +265,13 @@ class AccountManager:
             ],
         ]
 
-    def request(self, account_id: str, method: str, path: str, body: bytes | None = None, headers: dict[str, str] | None = None) -> tuple[int, bytes, str]:
+    def request(self, account_id: str, method: str, path: str, body: bytes | None = None, headers: dict[str, str] | None = None, timeout: float = 30) -> tuple[int, bytes, str]:
         worker = self.get(account_id)
         if not worker:
             raise KeyError(account_id)
         request = Request(worker.base_url + path, data=body, method=method, headers=headers or {})
         try:
-            with urlopen(request, timeout=30) as response:
+            with urlopen(request, timeout=timeout) as response:
                 return response.status, response.read(), response.headers.get("content-type", "application/json")
         except HTTPError as exc:
             return exc.code, exc.read(), exc.headers.get("content-type", "application/json")

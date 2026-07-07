@@ -26,11 +26,15 @@ class RecoveryM1StrategyTests(unittest.TestCase):
                 "initial_loss_money": 3.0,
                 "loss_increment_money": 2.0,
                 "basket_profit_target": 0.50,
+                "basket_loss_limit": 0.0,
+                "basket_loss_limit_enabled": False,
                 "daily_profit_target": 0.0,
                 "daily_profit_target_enabled": False,
+                "daily_loss_limit": 0.0,
+                "daily_loss_limit_enabled": False,
             },
         )
-        self.scalping_setup.start()
+        self.scalping_setup_mock = self.scalping_setup.start()
         self.addCleanup(self.scalping_setup.stop)
         self.uuid = patch("app.strategy.recovery_m1_strategy.uuid.uuid4")
         uuid_mock = self.uuid.start()
@@ -166,6 +170,22 @@ class RecoveryM1StrategyTests(unittest.TestCase):
             result = strategy.tick("XAUUSD")
         self.assertEqual(result["action"], "CLOSE_BASKET_PROFIT")
         self.assertAlmostEqual(result["basket_profit"], 0.80)
+        self.assertEqual(close.call_count, 2)
+
+    def test_counter_basket_closes_when_session_loss_limit_is_reached(self):
+        setup = self.scalping_setup_mock.return_value.copy()
+        setup.update({"basket_loss_limit": 6.0, "basket_loss_limit_enabled": True})
+        self.scalping_setup_mock.return_value = setup
+        strategy = RecoveryM1Strategy()
+        positions = [
+            {"ticket": 30, "comment": "m1rec-1-sell", "type_str": "SELL", "profit": -3.5},
+            {"ticket": 31, "comment": "m1rec-2-buy", "type_str": "BUY", "profit": -2.6},
+        ]
+        with patch("app.strategy.recovery_m1_strategy.get_open_positions", return_value=positions), \
+             patch("app.strategy.recovery_m1_strategy.order_executor.close_position_ticket", return_value=_Result()) as close:
+            result = strategy.tick("XAUUSD")
+        self.assertEqual(result["action"], "CLOSE_BASKET_LOSS_LIMIT")
+        self.assertAlmostEqual(result["basket_profit"], -6.10)
         self.assertEqual(close.call_count, 2)
 
 

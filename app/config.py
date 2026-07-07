@@ -29,6 +29,13 @@ class Settings(BaseSettings):
     mt5_server: str | None = Field(default=None)
     mt5_path: str | None = Field(default=None)
 
+    # Optional second account, started in an isolated MT5 worker.
+    mt5_login_2: int | None = Field(default=None)
+    mt5_password_2: str | None = Field(default=None)
+    mt5_server_2: str | None = Field(default=None)
+    mt5_path_2: str | None = Field(default=None)
+    mt5_label_2: str = Field(default="Akun Kedua")
+
     # --- Instrument ---
     symbol: str = Field(default="XAUUSD")
     # NoDecode: skip pydantic-settings' JSON pre-parse so the validator below
@@ -73,7 +80,9 @@ class Settings(BaseSettings):
     log_level: str = Field(default="INFO")
 
     @field_validator(
-        "mt5_login", "mt5_password", "mt5_server", "mt5_path", mode="before"
+        "mt5_login", "mt5_password", "mt5_server", "mt5_path",
+        "mt5_login_2", "mt5_password_2", "mt5_server_2", "mt5_path_2",
+        mode="before"
     )
     @classmethod
     def _empty_to_none(cls, v: object) -> object:

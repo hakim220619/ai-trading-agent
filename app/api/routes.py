@@ -340,7 +340,12 @@ def account_login(req: MT5LoginRequest) -> ActionResponse:
             return ActionResponse(ok=False, message=str(exc))
     if not req.password:
         return ActionResponse(ok=False, message="password akun utama wajib diisi")
-    ok, message = connection.login(req.login, req.password, req.server.strip())
+    ok, message = connection.login(
+        req.login,
+        req.password,
+        req.server.strip(),
+        req.terminal_path,
+    )
     return ActionResponse(ok=ok, message=message)
 
 

@@ -55,6 +55,8 @@ class RecoveryM1Strategy:
             "loss_limit_money": self._loss_for_step(step, setup),
             "next_lot": round(next_lot, 2),
             "basket_profit_target": setup["basket_profit_target"],
+            "basket_loss_limit": setup.get("basket_loss_limit", 0.0),
+            "basket_loss_limit_enabled": setup.get("basket_loss_limit_enabled", False),
             "daily_profit_target": setup["daily_profit_target"],
             "confidence_threshold": setup["confidence_threshold"],
             "cycle_key": self._cycle_keys.get(symbol),
@@ -94,6 +96,10 @@ class RecoveryM1Strategy:
             setup = get_scalping_setup(symbol)
             if basket_profit > setup["basket_profit_target"]:
                 return self._close_basket(positions, symbol, basket_profit)
+            basket_loss_enabled = bool(setup.get("basket_loss_limit_enabled", False))
+            basket_loss_limit = float(setup.get("basket_loss_limit", 0.0))
+            if basket_loss_enabled and basket_loss_limit > 0 and basket_profit <= -basket_loss_limit:
+                return self._close_basket(positions, symbol, basket_profit, action="CLOSE_BASKET_LOSS_LIMIT")
 
             retry = self._network_retries.get(symbol)
             if retry and retry[0] > observed_step:

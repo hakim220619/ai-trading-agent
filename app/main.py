@@ -149,6 +149,41 @@ class TradingBot:
             return True
         return False
 
+    def _check_recovery_daily_caps(
+        self,
+        symbol: str,
+        setup: dict[str, Any],
+        has_positions: bool,
+    ) -> dict[str, object] | None:
+        """Stop Counter Scalping when today's configured P/L cap is reached."""
+        daily = daily_summary(bot_only=True)
+        daily_profit = float(daily["profit"])
+        profit_enabled = bool(setup["daily_profit_target_enabled"])
+        profit_target = float(setup["daily_profit_target"])
+        loss_enabled = bool(setup.get("daily_loss_limit_enabled", False))
+        loss_limit = float(setup.get("daily_loss_limit", 0.0))
+
+        action = ""
+        message = ""
+        if profit_enabled and profit_target > 0 and daily_profit >= profit_target:
+            action = "WAIT_DAILY_PROFIT_TARGET"
+            message = f"target profit harian tercapai ({daily['profit']}/{profit_target}); auto trade dihentikan"
+        elif loss_enabled and loss_limit > 0 and daily_profit <= -loss_limit:
+            action = "WAIT_DAILY_LOSS_LIMIT"
+            message = f"batas loss harian tercapai ({daily['profit']}/-{loss_limit}); auto trade dihentikan"
+        else:
+            return None
+
+        close_results = order_executor.close_all_positions(symbol) if has_positions else []
+        self.confidence_auto = False
+        self._stop_event.set()
+        return {
+            "action": action, "ok": True, "message": message,
+            "daily_profit": daily_profit, "daily_profit_target": profit_target,
+            "daily_loss_limit": loss_limit, "closed_positions": close_results,
+            "auto_trade_stopped": True,
+        }
+
     def tick(self, symbol: str | None = None) -> Signal | None:
         """Run one full decision cycle. Returns the computed Signal."""
         if not MT5_AVAILABLE:
@@ -162,24 +197,14 @@ class TradingBot:
         if self.confidence_auto and self.active_strategy == "recovery_m1":
             initial_direction = None
             has_recovery_positions = self.recovery_m1.has_active_positions(symbol)
+            scalping_setup = get_scalping_setup(symbol)
+            daily_cap_result = self._check_recovery_daily_caps(symbol, scalping_setup, has_recovery_positions)
+            if daily_cap_result:
+                self.last_order_result = daily_cap_result
+                self._last_order_results[symbol] = daily_cap_result
+                self.last_run_ts = time.time()
+                return None
             if not has_recovery_positions:
-                scalping_setup = get_scalping_setup(symbol)
-                daily_target_enabled = bool(scalping_setup["daily_profit_target_enabled"])
-                daily_target = float(scalping_setup["daily_profit_target"])
-                daily = daily_summary(bot_only=True)
-                if daily_target_enabled and daily_target > 0 and float(daily["profit"]) >= daily_target:
-                    self.confidence_auto = False
-                    self._stop_event.set()
-                    result = {
-                        "action": "WAIT_DAILY_PROFIT_TARGET", "ok": True,
-                        "message": f"target profit harian tercapai ({daily['profit']}/{daily_target}); auto trade dihentikan",
-                        "daily_profit": float(daily["profit"]), "daily_profit_target": daily_target,
-                        "auto_trade_stopped": True,
-                    }
-                    self.last_order_result = result
-                    self._last_order_results[symbol] = result
-                    self.last_run_ts = time.time()
-                    return None
                 sig = self.compute_signal_now("M1", symbol)
                 self.last_signal = sig
                 self._last_signals[symbol] = sig

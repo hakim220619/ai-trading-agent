@@ -8,6 +8,27 @@ from app.mt5.connection import MT5Connection
 
 
 class MT5ConnectionIdentityTests(unittest.TestCase):
+    def test_login_uses_terminal_path_from_dashboard(self) -> None:
+        fake_mt5 = MagicMock()
+        fake_mt5.initialize.return_value = True
+        fake_mt5.account_info.return_value = SimpleNamespace(login=222)
+        with (
+            patch("app.mt5.connection.MT5_AVAILABLE", True),
+            patch("app.mt5.connection.mt5", fake_mt5),
+            patch("app.mt5.connection.settings.mt5_path", r"C:\\Default\\terminal64.exe"),
+        ):
+            ok, _ = MT5Connection().login(
+                222, "secret", "Broker", r"C:\\Selected\\terminal64.exe"
+            )
+
+        self.assertTrue(ok)
+        fake_mt5.initialize.assert_called_once_with(
+            path=r"C:\\Selected\\terminal64.exe",
+            login=222,
+            password="secret",
+            server="Broker",
+        )
+
     def test_connect_rejects_terminal_logged_into_different_account(self) -> None:
         fake_mt5 = MagicMock()
         fake_mt5.initialize.return_value = True

@@ -153,5 +153,9 @@ class ScalpingSetupRequest(BaseModel):
     initial_loss_money: float = Field(gt=0.0, le=1_000_000.0)
     loss_increment_money: float = Field(gt=0.0, le=1_000_000.0)
     basket_profit_target: float = Field(gt=0.0, le=1_000_000.0)
+    basket_loss_limit: float = Field(default=0.0, ge=0.0, le=1_000_000.0)
+    basket_loss_limit_enabled: bool = False
     daily_profit_target: float = Field(default=0.0, ge=0.0, le=1_000_000.0)
     daily_profit_target_enabled: bool = False
+    daily_loss_limit: float = Field(default=0.0, ge=0.0, le=1_000_000.0)
+    daily_loss_limit_enabled: bool = False

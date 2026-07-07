@@ -14,7 +14,7 @@ _DEFAULTS = {
     "XAUUSD": {"stop_loss_money": 0.0, "take_profit_money": 0.0},
 }
 _SETUP_DEFAULTS = {
-    "active_strategy": "confidence_m5",
+    "active_strategy": os.getenv("DEFAULT_ACTIVE_STRATEGY", "confidence_m5"),
     "confidence_threshold": 0.65,
     "max_open_positions": 3,
     "btcusd_min_lot": 0.05,
@@ -35,8 +35,12 @@ _SCALPING_DEFAULTS = {
     "initial_loss_money": 3.0,
     "loss_increment_money": 2.0,
     "basket_profit_target": 0.50,
+    "basket_loss_limit": 0.0,
+    "basket_loss_limit_enabled": False,
     "daily_profit_target": 0.0,
     "daily_profit_target_enabled": False,
+    "daily_loss_limit": 0.0,
+    "daily_loss_limit_enabled": False,
 }
 
 
@@ -145,8 +149,12 @@ def save_scalping_setup(symbol: str, values: dict) -> dict[str, float | bool]:
         "initial_loss_money": max(0.01, float(values["initial_loss_money"])),
         "loss_increment_money": max(0.01, float(values["loss_increment_money"])),
         "basket_profit_target": max(0.01, float(values["basket_profit_target"])),
+        "basket_loss_limit": max(0.0, float(values["basket_loss_limit"])),
+        "basket_loss_limit_enabled": bool(values["basket_loss_limit_enabled"]),
         "daily_profit_target": max(0.0, float(values["daily_profit_target"])),
         "daily_profit_target_enabled": bool(values["daily_profit_target_enabled"]),
+        "daily_loss_limit": max(0.0, float(values["daily_loss_limit"])),
+        "daily_loss_limit_enabled": bool(values["daily_loss_limit_enabled"]),
     }
     with _LOCK:
         _SCALPING_SETUPS[symbol].update(normalized)

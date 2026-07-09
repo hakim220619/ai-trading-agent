@@ -49,7 +49,7 @@ class TradingBot:
         self._last_bar_time: Any = None
         self.confidence_auto: bool = False
         self._last_auto_attempt_ts: float = 0.0
-        self.auto_symbols: list[str] = ["XAUUSD"]
+        self.auto_symbols: list[str] = [settings.symbol]
         self._last_bar_times: dict[str, Any] = {}
         self._last_signals: dict[str, Signal] = {}
         self._last_order_results: dict[str, dict[str, object]] = {}
@@ -184,6 +184,15 @@ class TradingBot:
             "auto_trade_stopped": True,
         }
 
+    def _trading_hour_allowed(self) -> tuple[bool, int, dict[str, Any]]:
+        setup = get_trading_setup()
+        current_hour = time.localtime().tm_hour
+        hours = setup.get("trading_hours", [True] * 24)
+        allowed = True
+        if bool(setup.get("trading_hours_enabled", False)):
+            allowed = bool(isinstance(hours, list) and len(hours) > current_hour and hours[current_hour])
+        return allowed, current_hour, setup
+
     def tick(self, symbol: str | None = None) -> Signal | None:
         """Run one full decision cycle. Returns the computed Signal."""
         if not MT5_AVAILABLE:
@@ -198,6 +207,7 @@ class TradingBot:
             initial_direction = None
             has_recovery_positions = self.recovery_m1.has_active_positions(symbol)
             scalping_setup = get_scalping_setup(symbol)
+            hour_allowed, current_hour, _setup = self._trading_hour_allowed()
             daily_cap_result = self._check_recovery_daily_caps(symbol, scalping_setup, has_recovery_positions)
             if daily_cap_result:
                 self.last_order_result = daily_cap_result
@@ -205,6 +215,16 @@ class TradingBot:
                 self.last_run_ts = time.time()
                 return None
             if not has_recovery_positions:
+                if not hour_allowed:
+                    result = {
+                        "action": "WAIT_TRADING_HOUR", "ok": True,
+                        "message": f"jam trading {current_hour:02d}:00-{(current_hour + 1) % 24:02d}:00 non aktif",
+                        "hour": current_hour,
+                    }
+                    self.last_order_result = result
+                    self._last_order_results[symbol] = result
+                    self.last_run_ts = time.time()
+                    return None
                 sig = self.compute_signal_now("M1", symbol)
                 self.last_signal = sig
                 self._last_signals[symbol] = sig
@@ -220,7 +240,12 @@ class TradingBot:
                 initial_confidence = buy_confidence
             elif initial_direction == "SELL":
                 initial_confidence = sell_confidence
-            result = self.recovery_m1.tick(symbol, initial_direction=initial_direction, initial_confidence=initial_confidence)
+            result = self.recovery_m1.tick(
+                symbol,
+                initial_direction=initial_direction,
+                initial_confidence=initial_confidence,
+                allow_new_entries=hour_allowed,
+            )
             self.last_order_result = result
             self._last_order_results[symbol] = result
             self.last_run_ts = time.time()
@@ -257,6 +282,17 @@ class TradingBot:
         position_manager.manage_positions(symbol, new_signal=execution_signal.action)
 
         if execution_signal.action in ("BUY", "SELL"):
+            hour_allowed, current_hour, _setup = self._trading_hour_allowed()
+            if not hour_allowed:
+                result = {
+                    "action": "WAIT_TRADING_HOUR", "ok": True,
+                    "message": f"jam trading {current_hour:02d}:00-{(current_hour + 1) % 24:02d}:00 non aktif",
+                    "hour": current_hour,
+                }
+                self.last_order_result = result
+                self._last_order_results[symbol] = result
+                logger.info("Auto entry {} blocked by trading hour {}", symbol, current_hour)
+                return sig
             self._last_auto_attempt_ts = time.time()
             self._last_auto_attempts[symbol] = self._last_auto_attempt_ts
             self._maybe_enter(execution_signal, df, confidence_sizing=self.confidence_auto, symbol=symbol)
@@ -318,6 +354,10 @@ class TradingBot:
             return
         last_result = self._last_order_results.get(symbol)
         if last_result and bool(last_result.get("ok")):
+            return
+        hour_allowed, current_hour, _setup = self._trading_hour_allowed()
+        if not hour_allowed:
+            logger.info("Retry confidence auto {} blocked by trading hour {}", symbol, current_hour)
             return
         execution_signal = self._confidence_execution_signal(sig, symbol)
         if execution_signal.action not in ("BUY", "SELL"):

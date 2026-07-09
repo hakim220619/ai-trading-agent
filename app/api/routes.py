@@ -135,6 +135,8 @@ def status() -> StatusResponse:
         daily_profit_limit_money=float(setup["daily_profit_limit_money"]),
         daily_lot_limit_enabled=bool(setup["daily_lot_limit_enabled"]),
         daily_lot_limit=float(setup["daily_lot_limit"]),
+        trading_hours_enabled=bool(setup["trading_hours_enabled"]),
+        trading_hours=list(setup["trading_hours"]),
         daily_profit_today=float(daily["profit"]),
         daily_lot_today=float(daily["lot"]),
         **trade_status,
@@ -269,7 +271,10 @@ def _chart_strategy_signals(df, symbol: str, timeframe: str) -> list[dict[str, o
 
 @router.post("/risk-config", response_model=ActionResponse, tags=["control"])
 def update_risk_config(req: SymbolRiskConfigRequest) -> ActionResponse:
-    values = save_symbol_risk(req.symbol, req.stop_loss_money, req.take_profit_money)
+    try:
+        values = save_symbol_risk(req.symbol, req.stop_loss_money, req.take_profit_money)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return ActionResponse(
         ok=True,
         message=f"konfigurasi SL/TP {req.symbol} berhasil disimpan",
@@ -300,7 +305,10 @@ def scalping_setup(symbol: str | None = None) -> dict:
 def update_scalping_setup(req: ScalpingSetupRequest) -> ActionResponse:
     payload = req.model_dump()
     symbol = payload.pop("symbol")
-    values = save_scalping_setup(symbol, payload)
+    try:
+        values = save_scalping_setup(symbol, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return ActionResponse(ok=True, message=f"konfigurasi Counter Scalping M1 {symbol} tersimpan", detail={"symbol": symbol, **values})
 
 

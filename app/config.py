@@ -102,7 +102,7 @@ class Settings(BaseSettings):
     @field_validator("symbol")
     @classmethod
     def _upper_symbol(cls, v: str) -> str:
-        return v.strip().upper()
+        return v.strip()
 
 
 @lru_cache(maxsize=1)

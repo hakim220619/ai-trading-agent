@@ -25,6 +25,8 @@ _SETUP_DEFAULTS = {
     "daily_profit_limit_money": 0.0,
     "daily_lot_limit_enabled": False,
     "daily_lot_limit": 0.0,
+    "trading_hours_enabled": False,
+    "trading_hours": [True] * 24,
 }
 _SCALPING_DEFAULTS = {
     "confidence_threshold": 0.50,
@@ -60,12 +62,21 @@ def _load() -> dict[str, dict[str, float]]:
 _CONFIG = _load()
 
 
-def _load_setup() -> dict[str, float | int | bool | str]:
+def _normalize_trading_hours(value: object) -> list[bool]:
+    if not isinstance(value, list):
+        return [True] * 24
+    hours = [bool(item) for item in value[:24]]
+    return hours + [True] * (24 - len(hours))
+
+
+def _load_setup() -> dict[str, float | int | bool | str | list[bool]]:
     try:
         saved = json.loads(_PATH.read_text(encoding="utf-8")).get("trading_setup", {})
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         saved = {}
-    return {**_SETUP_DEFAULTS, **{key: saved[key] for key in _SETUP_DEFAULTS if key in saved}}
+    setup = {**_SETUP_DEFAULTS, **{key: saved[key] for key in _SETUP_DEFAULTS if key in saved}}
+    setup["trading_hours"] = _normalize_trading_hours(setup.get("trading_hours"))
+    return setup
 
 
 _SETUP = _load_setup()
@@ -78,6 +89,15 @@ def _normalize_scalping_symbol(symbol: str) -> str:
     if "XAUUSD" in upper or "GOLD" in upper:
         return "XAUUSD"
     raise ValueError("konfigurasi scalping hanya tersedia untuk BTCUSD atau XAUUSD")
+
+
+def _normalize_risk_symbol(symbol: str) -> str:
+    upper = symbol.upper()
+    if "BTCUSD" in upper:
+        return "BTCUSD"
+    if "XAUUSD" in upper or "GOLD" in upper:
+        return "XAUUSD"
+    return upper
 
 
 def _load_scalping_setups() -> dict[str, dict[str, float | bool]]:
@@ -115,7 +135,7 @@ def _persist() -> None:
 
 def get_symbol_risk(symbol: str) -> dict[str, float]:
     with _LOCK:
-        return _CONFIG.get(symbol.upper(), {"stop_loss_money": 0.0, "take_profit_money": 0.0}).copy()
+        return _CONFIG.get(_normalize_risk_symbol(symbol), {"stop_loss_money": 0.0, "take_profit_money": 0.0}).copy()
 
 
 def get_all_symbol_risk() -> dict[str, dict[str, float]]:
@@ -123,9 +143,11 @@ def get_all_symbol_risk() -> dict[str, dict[str, float]]:
         return {symbol: values.copy() for symbol, values in _CONFIG.items()}
 
 
-def get_trading_setup() -> dict[str, float | int | bool | str]:
+def get_trading_setup() -> dict[str, float | int | bool | str | list[bool]]:
     with _LOCK:
-        return _SETUP.copy()
+        setup = _SETUP.copy()
+        setup["trading_hours"] = list(setup.get("trading_hours", [True] * 24))  # type: ignore[arg-type]
+        return setup
 
 
 def get_scalping_setup(symbol: str = "BTCUSD") -> dict[str, float | bool]:
@@ -162,7 +184,7 @@ def save_scalping_setup(symbol: str, values: dict) -> dict[str, float | bool]:
         return _SCALPING_SETUPS[symbol].copy()
 
 
-def save_trading_setup(values: dict) -> dict[str, float | int | bool | str]:
+def save_trading_setup(values: dict) -> dict[str, float | int | bool | str | list[bool]]:
     active_strategy = str(values.get("active_strategy", _SETUP.get("active_strategy", "confidence_m5")))
     if active_strategy not in {"confidence_m5", "recovery_m1"}:
         raise ValueError("strategi tidak dikenal")
@@ -178,6 +200,8 @@ def save_trading_setup(values: dict) -> dict[str, float | int | bool | str]:
         "daily_profit_limit_money": max(0.0, float(values["daily_profit_limit_money"])),
         "daily_lot_limit_enabled": bool(values["daily_lot_limit_enabled"]),
         "daily_lot_limit": max(0.0, float(values["daily_lot_limit"])),
+        "trading_hours_enabled": bool(values.get("trading_hours_enabled", False)),
+        "trading_hours": _normalize_trading_hours(values.get("trading_hours", [True] * 24)),
     }
     with _LOCK:
         _SETUP.update(normalized)
@@ -186,7 +210,7 @@ def save_trading_setup(values: dict) -> dict[str, float | int | bool | str]:
 
 
 def save_symbol_risk(symbol: str, stop_loss_money: float, take_profit_money: float) -> dict[str, float]:
-    symbol = symbol.upper()
+    symbol = _normalize_risk_symbol(symbol)
     if symbol not in _DEFAULTS:
         raise ValueError("market hanya BTCUSD atau XAUUSD")
     values = {

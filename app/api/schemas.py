@@ -38,6 +38,8 @@ class StatusResponse(BaseModel):
     daily_profit_limit_money: float = 0.0
     daily_lot_limit_enabled: bool = False
     daily_lot_limit: float = 0.0
+    trading_hours_enabled: bool = False
+    trading_hours: list[bool] = Field(default_factory=lambda: [True] * 24)
     daily_profit_today: float = 0.0
     daily_lot_today: float = 0.0
 
@@ -124,7 +126,7 @@ class AutoMarketsRequest(BaseModel):
 
 
 class SymbolRiskConfigRequest(BaseModel):
-    symbol: Literal["BTCUSD", "XAUUSD"]
+    symbol: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9._\-#]+$")
     stop_loss_money: float = Field(ge=0.0, le=1_000_000.0)
     take_profit_money: float = Field(ge=0.0, le=1_000_000.0)
 
@@ -141,10 +143,12 @@ class TradingSetupRequest(BaseModel):
     daily_profit_limit_money: float = Field(default=0.0, ge=0.0, le=1_000_000.0)
     daily_lot_limit_enabled: bool = False
     daily_lot_limit: float = Field(default=0.0, ge=0.0, le=1_000.0)
+    trading_hours_enabled: bool = False
+    trading_hours: list[bool] = Field(default_factory=lambda: [True] * 24, min_length=24, max_length=24)
 
 
 class ScalpingSetupRequest(BaseModel):
-    symbol: Literal["BTCUSD", "XAUUSD"]
+    symbol: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9._\-#]+$")
     confidence_threshold: float = Field(ge=0.50, le=0.99)
     base_lot: float = Field(ge=0.01, le=100.0)
     second_lot: float = Field(ge=0.01, le=100.0)

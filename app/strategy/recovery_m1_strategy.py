@@ -71,7 +71,13 @@ class RecoveryM1Strategy:
     def has_active_positions(self, symbol: str) -> bool:
         return any(self._parse_comment(p.get("comment")) for p in get_open_positions(symbol))
 
-    def tick(self, symbol: str, initial_direction: str | None = None, initial_confidence: float | None = None) -> dict[str, Any]:
+    def tick(
+        self,
+        symbol: str,
+        initial_direction: str | None = None,
+        initial_confidence: float | None = None,
+        allow_new_entries: bool = True,
+    ) -> dict[str, Any]:
         positions = [p for p in get_open_positions(symbol) if self._parse_comment(p.get("comment"))]
         if positions:
             def position_step(item: dict[str, Any]) -> int:
@@ -108,6 +114,13 @@ class RecoveryM1Strategy:
 
             loss_limit = self._loss_for_step(step, setup)
             if profit <= -loss_limit:
+                if not allow_new_entries:
+                    return {
+                        "action": "WAIT_TRADING_HOUR", "ok": True,
+                        "profit": profit, "basket_profit": basket_profit,
+                        "positions": len(positions), "loss_limit_money": loss_limit,
+                        "message": "jam trading non aktif; tidak menambah counter baru",
+                    }
                 self._steps[symbol] = step + 1
                 self._directions[symbol] = "BUY" if direction == "SELL" else "SELL"
                 return self._open(symbol)
@@ -126,6 +139,8 @@ class RecoveryM1Strategy:
         self.reset(symbol)
         if time.monotonic() < self._pending_open_until.get(symbol, 0.0):
             return {"action": "WAIT_ORDER_SYNC", "ok": True, "message": "menunggu posisi baru tersinkron dari broker"}
+        if not allow_new_entries:
+            return {"action": "WAIT_TRADING_HOUR", "ok": True, "message": "jam trading non aktif; menunggu slot aktif"}
         if initial_direction not in {"BUY", "SELL"}:
             return {"action": "WAIT_CONFIDENCE", "ok": True, "message": "confidence BUY/SELL belum lebih dari 50%"}
         self._directions[symbol] = initial_direction

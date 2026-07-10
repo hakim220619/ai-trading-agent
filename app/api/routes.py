@@ -456,18 +456,18 @@ def signal(timeframe: str | None = None, symbol: str | None = None) -> SignalRes
         raise HTTPException(status_code=400, detail=f"symbol {selected_symbol} tidak tersedia di MT5")
     sig = bot.compute_signal_now(tf, selected_symbol)
     payload = sig.to_dict()
-    confidence = float(payload.get("confidence", 0.0) or 0.0)
     ml = payload.get("ml", {})
+    recommendation, confidence = bot.confidence_recommendation(sig)
     plan = bot.preview_trade_plan(sig, symbol=selected_symbol)
     threshold = float(get_trading_setup()["confidence_threshold"])
     if confidence >= threshold and isinstance(ml, dict):
-        recommendation = "BUY" if float(ml.get("buy", 0.0)) >= float(ml.get("sell", 0.0)) else "SELL"
         sr_ok, sr_reason = bot.confidence_support_resistance_check(sig, recommendation)
+        atr_mult, risk_reward = bot.confidence_risk_params(confidence)
         plan = bot.preview_trade_plan(
             sig,
             direction_override=recommendation,
-            atr_mult=0.60,
-            risk_reward=1.0,
+            atr_mult=atr_mult,
+            risk_reward=risk_reward,
             use_levels=False,
             symbol=selected_symbol,
         )
@@ -493,6 +493,7 @@ def signal(timeframe: str | None = None, symbol: str | None = None) -> SignalRes
             "stop_loss": position.get("sl"),
             "take_profit": position.get("tp"),
             "floating_profit": position.get("profit"),
+            "confidence_pct": position.get("confidence_pct"),
         }
         for position in open_positions
     ]
@@ -627,16 +628,18 @@ def trade_manual(req: ManualTradeRequest) -> ActionResponse:
     if plan is None:
         return ActionResponse(ok=False, message="gagal membuat rencana order dari data market terbaru")
     if req.direction == "BUY":
+        confidence = bot.directional_confidence(sig, req.direction)
         result = order_executor.open_buy(
             settings.symbol, req.lot, float(plan["stop_loss"]), float(plan["take_profit"]),
-            confidence_comment(sig.confidence, req.direction), enforce_spread=False,
+            confidence_comment(confidence, req.direction), enforce_spread=False,
         )
     else:
+        confidence = bot.directional_confidence(sig, req.direction)
         result = order_executor.open_sell(
             settings.symbol, req.lot, float(plan["stop_loss"]), float(plan["take_profit"]),
-            confidence_comment(sig.confidence, req.direction), enforce_spread=False,
+            confidence_comment(confidence, req.direction), enforce_spread=False,
         )
-    detail = {"plan": plan, "result": result.to_dict()}
+    detail = {"plan": plan, "confidence": round(confidence, 4), "result": result.to_dict()}
     return ActionResponse(ok=result.ok, message=result.message, detail=detail)
 
 

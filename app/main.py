@@ -303,11 +303,10 @@ class TradingBot:
 
     def _confidence_execution_signal(self, sig: Signal, symbol: str) -> Signal:
         """Convert a sufficiently confident ML forecast into an executable signal."""
-        confidence = max(float(sig.ml.get("buy", 0.0)), float(sig.ml.get("sell", 0.0)))
+        direction, confidence = self.confidence_recommendation(sig)
         threshold = float(get_trading_setup()["confidence_threshold"])
         if not sig.ml.get("model") or confidence < threshold:
             return Signal(price=sig.price, atr=sig.atr, confidence=confidence, ml=sig.ml, levels=sig.levels, reasons=[f"confidence {confidence:.1%} < {threshold:.1%}"])
-        direction = "BUY" if float(sig.ml.get("buy", 0.0)) >= float(sig.ml.get("sell", 0.0)) else "SELL"
         tick = get_current_tick(symbol)
         if not tick or time.time() - float(tick.get("time", 0.0)) > 120:
             return Signal(price=sig.price, atr=sig.atr, confidence=confidence, ml=sig.ml, levels=sig.levels, reasons=["auto blocked: market tick inactive / market closed"])
@@ -345,6 +344,27 @@ class TradingBot:
             return False, f"auto blocked: SELL belum dekat resistance ({distance:.2%} > {tolerance:.2%})"
         return True, f"SELL dekat resistance {float(resistance):.5f} ({distance:.2%})"
 
+    def confidence_recommendation(self, sig: Signal) -> tuple[str, float]:
+        """Return the ML side and probability used by Confidence Auto."""
+        buy = float(sig.ml.get("buy", 0.0) or 0.0)
+        sell = float(sig.ml.get("sell", 0.0) or 0.0)
+        return ("BUY", buy) if buy >= sell else ("SELL", sell)
+
+    def directional_confidence(self, sig: Signal, direction: str) -> float:
+        """Return confidence for the selected direction, not the opposite side."""
+        key = "buy" if direction.upper() == "BUY" else "sell"
+        value = sig.ml.get(key)
+        if value is None:
+            return float(sig.confidence or 0.0)
+        return max(0.0, min(1.0, float(value or 0.0)))
+
+    def confidence_risk_params(self, confidence: float) -> tuple[float, float]:
+        """Risk profile used by both confidence preview and live entry."""
+        confidence = max(0.0, min(1.0, float(confidence or 0.0)))
+        atr_mult = 0.80 if confidence < 0.75 else 1.0 if confidence < 0.85 else 1.20
+        risk_reward = 1.0 if confidence < 0.75 else 1.20 if confidence < 0.85 else 1.50
+        return atr_mult, risk_reward
+
     def _retry_confidence_auto(self, symbol: str) -> None:
         """Retry a rejected confidence order without waiting for another M5 bar."""
         sig = self._last_signals.get(symbol)
@@ -379,11 +399,7 @@ class TradingBot:
         if tick:
             entry = tick["ask"] if sig.action == "BUY" else tick["bid"]
 
-        if confidence_sizing:
-            atr_mult = 0.80 if sig.confidence < 0.75 else 1.0 if sig.confidence < 0.85 else 1.20
-            risk_reward = 1.0 if sig.confidence < 0.75 else 1.20 if sig.confidence < 0.85 else 1.50
-        else:
-            atr_mult, risk_reward = 1.5, None
+        atr_mult, risk_reward = self.confidence_risk_params(sig.confidence) if confidence_sizing else (1.5, None)
         risk_config = get_symbol_risk(symbol)
         plan = build_trade_plan(
             direction=sig.action,

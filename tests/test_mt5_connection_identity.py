@@ -4,6 +4,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+from app.account_manager import AccountProfile
 from app.mt5.connection import MT5Connection
 
 
@@ -15,7 +16,6 @@ class MT5ConnectionIdentityTests(unittest.TestCase):
         with (
             patch("app.mt5.connection.MT5_AVAILABLE", True),
             patch("app.mt5.connection.mt5", fake_mt5),
-            patch("app.mt5.connection.settings.mt5_path", r"C:\\Default\\terminal64.exe"),
         ):
             ok, _ = MT5Connection().login(
                 222, "secret", "Broker", r"C:\\Selected\\terminal64.exe"
@@ -39,10 +39,10 @@ class MT5ConnectionIdentityTests(unittest.TestCase):
         with (
             patch("app.mt5.connection.MT5_AVAILABLE", True),
             patch("app.mt5.connection.mt5", fake_mt5),
-            patch("app.mt5.connection.settings.mt5_path", r"C:\\MT5-2\\terminal64.exe"),
-            patch("app.mt5.connection.settings.mt5_login", 222),
-            patch("app.mt5.connection.settings.mt5_password", "secret"),
-            patch("app.mt5.connection.settings.mt5_server", "Broker"),
+            patch("app.account_manager.account_manager.profile", return_value=AccountProfile(
+                "default", "Akun Utama", 222, "Broker", r"C:\\MT5-2\\terminal64.exe"
+            )),
+            patch("app.account_manager.account_manager.saved_password", return_value="secret"),
         ):
             self.assertFalse(MT5Connection().connect())
 

@@ -45,6 +45,7 @@ class AccountProfile:
     server: str
     terminal_path: str
     protected_password: str = ""
+    symbol: str = "XAUUSD"
 
 
 class _DataBlob(ctypes.Structure):
@@ -90,21 +91,35 @@ class AccountManager:
         self._workers: dict[str, AccountWorker] = {}
         self._profiles: dict[str, AccountProfile] = {}
         self._lock = Lock()
-        self._config_path = Path(os.getenv("ACCOUNTS_CONFIG_PATH", "logs/accounts.json"))
+        self._config_path = Path(os.getenv("ACCOUNTS_CONFIG_PATH", "settings/accounts.json"))
+        self._config_mtime_ns: int | None = None
         self._load_profiles()
 
     def _load_profiles(self) -> None:
         try:
             payload = json.loads(self._config_path.read_text(encoding="utf-8"))
+            profiles: dict[str, AccountProfile] = {}
             for item in payload.get("accounts", []):
                 profile = AccountProfile(
                     account_id=str(item["account_id"]), label=str(item.get("label") or item["account_id"]),
                     login=int(item["login"]), server=str(item["server"]), terminal_path=str(item["terminal_path"]),
                     protected_password=str(item.get("protected_password", "")),
+                    symbol=str(item.get("symbol", "XAUUSD")).strip().upper() or "XAUUSD",
                 )
-                self._profiles[profile.account_id] = profile
+                profiles[profile.account_id] = profile
+            self._profiles = profiles
+            self._config_mtime_ns = self._config_path.stat().st_mtime_ns
         except (FileNotFoundError, KeyError, TypeError, ValueError, json.JSONDecodeError):
             self._profiles = {}
+
+    def _reload_if_changed(self) -> None:
+        """Reload profiles after accounts.json is edited outside the app."""
+        try:
+            modified = self._config_path.stat().st_mtime_ns
+        except OSError:
+            modified = None
+        if modified != self._config_mtime_ns:
+            self._load_profiles()
 
     def _save_profiles(self) -> None:
         self._config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -175,7 +190,8 @@ class AccountManager:
                         previous = self._profiles.get(account_id)
                         protected = _protect_password(password) or (previous.protected_password if previous else "")
                         self._profiles[account_id] = AccountProfile(
-                            account_id, worker.label, login, server.strip(), terminal_path.strip(), protected
+                            account_id, worker.label, login, server.strip(), terminal_path.strip(), protected,
+                            previous.symbol if previous else "XAUUSD",
                         )
                         self._save_profiles()
                     return worker
@@ -210,32 +226,15 @@ class AccountManager:
 
     def restore(self) -> None:
         """Restart every saved account worker after the main application starts."""
-        # The optional second account in .env is authoritative at startup. It
-        # uses a separate terminal because the MT5 Python API has one terminal
-        # session per process.
-        from app.config import settings
-
-        env_password = ""
-        if all((settings.mt5_login_2, settings.mt5_password_2, settings.mt5_server_2, settings.mt5_path_2)):
-            env_password = str(settings.mt5_password_2)
-            previous = self._profiles.get("account-2")
-            self._profiles["account-2"] = AccountProfile(
-                account_id="account-2",
-                label=settings.mt5_label_2.strip() or "Akun Kedua",
-                login=int(settings.mt5_login_2),
-                server=str(settings.mt5_server_2).strip(),
-                terminal_path=str(settings.mt5_path_2).strip(),
-                protected_password=_protect_password(env_password) or (previous.protected_password if previous else ""),
-            )
-            self._save_profiles()
-
         for profile in list(self._profiles.values()):
+            if profile.account_id == "default":
+                continue
             if self.get(profile.account_id):
                 continue
             try:
                 self.add(
                     profile.account_id, profile.label, profile.login,
-                    env_password if profile.account_id == "account-2" and env_password else _unprotect_password(profile.protected_password), profile.server,
+                    _unprotect_password(profile.protected_password), profile.server,
                     profile.terminal_path, persist=False,
                 )
             except (ValueError, RuntimeError):
@@ -253,15 +252,29 @@ class AccountManager:
         profile = self._profiles.get(account_id.strip().lower())
         return _unprotect_password(profile.protected_password) if profile else ""
 
+    def profile(self, account_id: str) -> AccountProfile | None:
+        """Return an internal saved profile, including the primary account."""
+        return self._profiles.get(account_id.strip().lower())
+
     def list(self) -> list[dict[str, Any]]:
+        self._reload_if_changed()
+        primary = self._profiles.get("default")
+        default_row = (
+            {"account_id": "default", "label": primary.label, "login": primary.login,
+             "server": primary.server, "terminal_path": primary.terminal_path,
+             "symbol": primary.symbol, "worker": False, "online": True}
+            if primary else
+            {"account_id": "default", "label": "Akun Utama", "worker": False, "online": True}
+        )
         return [
-            {"account_id": "default", "label": "Akun Utama", "worker": False, "online": True},
+            default_row,
             *[
                 {"account_id": profile.account_id, "label": profile.label, "login": profile.login,
                  "server": profile.server, "terminal_path": profile.terminal_path,
+                 "symbol": profile.symbol,
                  "password_saved": bool(profile.protected_password), "worker": True,
                  "online": self.get(profile.account_id) is not None}
-                for profile in self._profiles.values()
+                for profile in self._profiles.values() if profile.account_id != "default"
             ],
         ]
 

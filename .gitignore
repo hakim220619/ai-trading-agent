@@ -14,6 +14,7 @@ data/*.csv
 logs/*.log
 logs/accounts.json
 logs/accounts/
+settings/accounts.json
 app/ml/models/*.json
 app/ml/models/*.pkl
 

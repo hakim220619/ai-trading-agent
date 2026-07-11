@@ -7,6 +7,9 @@ from the environment.
 from __future__ import annotations
 
 from functools import lru_cache
+import json
+import os
+from pathlib import Path
 from typing import Annotated
 
 from pydantic import Field, field_validator
@@ -22,19 +25,6 @@ class Settings(BaseSettings):
         extra="ignore",
         case_sensitive=False,
     )
-
-    # --- MT5 credentials ---
-    mt5_login: int | None = Field(default=None)
-    mt5_password: str | None = Field(default=None)
-    mt5_server: str | None = Field(default=None)
-    mt5_path: str | None = Field(default=None)
-
-    # Optional second account, started in an isolated MT5 worker.
-    mt5_login_2: int | None = Field(default=None)
-    mt5_password_2: str | None = Field(default=None)
-    mt5_server_2: str | None = Field(default=None)
-    mt5_path_2: str | None = Field(default=None)
-    mt5_label_2: str = Field(default="Akun Kedua")
 
     # --- Instrument ---
     symbol: str = Field(default="XAUUSD")
@@ -79,17 +69,18 @@ class Settings(BaseSettings):
     # --- Logging ---
     log_level: str = Field(default="INFO")
 
-    @field_validator(
-        "mt5_login", "mt5_password", "mt5_server", "mt5_path",
-        "mt5_login_2", "mt5_password_2", "mt5_server_2", "mt5_path_2",
-        mode="before"
-    )
-    @classmethod
-    def _empty_to_none(cls, v: object) -> object:
-        """Treat blank .env entries (e.g. ``MT5_LOGIN=``) as None, not ''."""
-        if isinstance(v, str) and v.strip() == "":
-            return None
-        return v
+    def model_post_init(self, __context: object) -> None:
+        """Apply the default market assigned to this account in accounts.json."""
+        config_path = Path(os.getenv("ACCOUNTS_CONFIG_PATH", "settings/accounts.json"))
+        account_id = os.getenv("ACCOUNT_ID", "default").strip().lower() or "default"
+        try:
+            accounts = json.loads(config_path.read_text(encoding="utf-8")).get("accounts", [])
+            profile = next(item for item in accounts if str(item.get("account_id", "")).lower() == account_id)
+            configured_symbol = str(profile.get("symbol", "")).strip().upper()
+            if configured_symbol:
+                self.symbol = configured_symbol
+        except (FileNotFoundError, StopIteration, TypeError, ValueError, json.JSONDecodeError):
+            pass
 
     @field_validator("timeframes", mode="before")
     @classmethod

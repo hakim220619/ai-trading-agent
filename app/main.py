@@ -231,9 +231,9 @@ class TradingBot:
                 buy_confidence = float(sig.ml.get("buy", 0.0) or 0.0)
                 sell_confidence = float(sig.ml.get("sell", 0.0) or 0.0)
                 threshold = float(scalping_setup["confidence_threshold"])
-                if buy_confidence > threshold and buy_confidence > sell_confidence:
+                if buy_confidence >= threshold and buy_confidence > sell_confidence:
                     initial_direction = "BUY"
-                elif sell_confidence > threshold and sell_confidence > buy_confidence:
+                elif sell_confidence >= threshold and sell_confidence > buy_confidence:
                     initial_direction = "SELL"
             initial_confidence = None
             if initial_direction == "BUY":

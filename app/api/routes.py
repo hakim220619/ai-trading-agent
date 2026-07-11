@@ -450,7 +450,7 @@ def activity_logs(limit: int = 300) -> dict:
 @router.get("/signal", response_model=SignalResponse, tags=["monitor"])
 def signal(timeframe: str | None = None, symbol: str | None = None) -> SignalResponse:
     bot = _get_bot()
-    tf = timeframe or bot.PRIMARY_TF
+    tf = timeframe or ("M1" if bot.active_strategy == "recovery_m1" else bot.PRIMARY_TF)
     selected_symbol = symbol.strip() if symbol else settings.symbol
     if symbol and not connection.symbol_info(selected_symbol):
         raise HTTPException(status_code=400, detail=f"symbol {selected_symbol} tidak tersedia di MT5")

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from collections import deque
+import os
 import platform
 from typing import Any
 
@@ -79,14 +80,19 @@ class MT5Connection:
             logger.info("MT5 auto-connect paused after dashboard logout.")
             return False
 
+        from app.account_manager import account_manager
+
+        account_id = os.getenv("ACCOUNT_ID", "default").strip().lower() or "default"
+        profile = account_manager.profile(account_id)
+        password = account_manager.saved_password(account_id)
         init_kwargs: dict[str, Any] = {}
-        if settings.mt5_path:
-            init_kwargs["path"] = settings.mt5_path
-        if settings.mt5_login and settings.mt5_password and settings.mt5_server:
+        if profile and profile.terminal_path:
+            init_kwargs["path"] = profile.terminal_path
+        if profile and password and profile.server:
             init_kwargs.update({
-                "login": int(settings.mt5_login),
-                "password": settings.mt5_password,
-                "server": settings.mt5_server,
+                "login": int(profile.login),
+                "password": password,
+                "server": profile.server,
             })
 
         if not mt5.initialize(**init_kwargs):
@@ -101,9 +107,9 @@ class MT5Connection:
         self._connected = True
         account = mt5.account_info()
         info = account._asdict() if account is not None else None
-        if settings.mt5_login and (not info or int(info.get("login") or 0) != int(settings.mt5_login)):
+        if profile and (not info or int(info.get("login") or 0) != int(profile.login)):
             actual = info.get("login") if info else None
-            logger.error("MT5 account mismatch: requested={} active={}", settings.mt5_login, actual)
+            logger.error("MT5 account mismatch: requested={} active={}", profile.login, actual)
             mt5.shutdown()
             self._connected = False
             return False
@@ -183,7 +189,11 @@ class MT5Connection:
             mt5.shutdown()
             self._connected = False
         init_kwargs: dict[str, Any] = {}
-        selected_path = (terminal_path or settings.mt5_path or "").strip()
+        from app.account_manager import account_manager
+
+        account_id = os.getenv("ACCOUNT_ID", "default").strip().lower() or "default"
+        profile = account_manager.profile(account_id)
+        selected_path = (terminal_path or (profile.terminal_path if profile else "") or "").strip()
         if selected_path:
             init_kwargs["path"] = selected_path
         init_kwargs.update({"login": int(login), "password": password, "server": server})

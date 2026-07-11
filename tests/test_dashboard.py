@@ -14,6 +14,9 @@ class DashboardTests(unittest.TestCase):
         self.assertIn("animateMetric", html)
         self.assertIn("profit-positive", html)
         self.assertIn('id="signalBadge"', html)
+        self.assertIn('id="signalAnalysisLabel"', html)
+        self.assertIn("syncAccountsFromJson", html)
+        self.assertIn("Posisi akun sebelumnya tetap berjalan", html)
         self.assertIn('id="nearestSupport"', html)
         self.assertIn('id="nearestResistance"', html)
         self.assertIn('id="bosBadge"', html)
@@ -185,10 +188,11 @@ class DashboardTests(unittest.TestCase):
         self.assertIn("changeStrategy", html)
         self.assertIn("/trade/strategy/", html)
 
-    def test_auto_confidence_defaults_to_xauusd_only(self) -> None:
+    def test_auto_confidence_defaults_to_configured_account_symbol(self) -> None:
+        from app.config import settings
         from app.main import TradingBot
 
-        self.assertEqual(TradingBot().auto_symbols, ["XAUUSD"])
+        self.assertEqual(TradingBot().auto_symbols, [settings.symbol])
 
 
 if __name__ == "__main__":
